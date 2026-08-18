@@ -11,35 +11,46 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Supplies Geyser's bundled language resources from Hydraulic when the Geyser
- * development/runtime artifact was built without its languages submodule.
- *
- * Hooking GeyserModBootstrap keeps this independent of the Fabric-specific
- * Geyser platform implementation and therefore avoids a compile-time dependency
- * on a platform class.
+ * Makes Geyser's locale resources available when its languages submodule is not
+ * present in the runtime artifact. Hydraulic bundles the language files instead.
  */
-@Mixin(targets = "org.geysermc.geyser.platform.mod.GeyserModBootstrap")
+@Mixin(targets = "org.geysermc.geyser.platform.mod.GeyserModBootstrap", remap = false)
 public abstract class GeyserModBootstrapResourceMixin {
-    @Inject(method = "getResourceOrNull", at = @At("HEAD"), cancellable = true)
+    @Inject(
+            method = "getResourceOrNull(Ljava/lang/String;)Ljava/io/InputStream;",
+            at = @At("HEAD"),
+            cancellable = true,
+            remap = false
+    )
     private void hydraulic$resolveBundledResource(String resource, CallbackInfoReturnable<InputStream> cir) {
         if (!resource.startsWith("languages/texts/")) {
             return;
         }
 
-        ModContainer hydraulic = FabricLoader.getInstance().getModContainer("hydraulic").orElse(null);
+        ModContainer hydraulic = FabricLoader.getInstance()
+                .getModContainer("hydraulic")
+                .orElse(null);
         if (hydraulic == null) {
             return;
         }
 
+        // Prefer Fabric's mod root so this works both from the development
+        // runtime and from the final bundled Hydraulic jar.
         var path = hydraulic.findPath(resource).orElse(null);
-        if (path == null) {
-            return;
+        if (path != null) {
+            try {
+                cir.setReturnValue(path.getFileSystem().provider().newInputStream(path));
+                return;
+            } catch (IOException ignored) {
+                // Fall through to the classloader fallback below.
+            }
         }
 
-        try {
-            cir.setReturnValue(path.getFileSystem().provider().newInputStream(path));
-        } catch (IOException ignored) {
-            // Fall through to Geyser's normal resource resolver.
+        InputStream stream = GeyserModBootstrapResourceMixin.class
+                .getClassLoader()
+                .getResourceAsStream(resource);
+        if (stream != null) {
+            cir.setReturnValue(stream);
         }
     }
 }
