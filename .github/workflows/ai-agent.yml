@@ -1,0 +1,863 @@
+name: AI Agent - Build & Fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task for the AI agent"
+        required: true
+        default: "Fix the project build without changing unrelated behavior."
+
+      max_attempts:
+        description: "Maximum AI fix/build attempts"
+        required: false
+        default: "3"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ai-agent-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ai-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      AI_MODEL: ${{ vars.AI_MODEL || 'openai/gpt-4.1-mini' }}
+      MAX_ATTEMPTS: ${{ inputs.max_attempts || '3' }}
+      TASK: ${{ inputs.task }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+    steps:
+
+      # ============================================================
+      # Check API key
+      # ============================================================
+
+      - name: Validate AI secret
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+            echo "::error::Missing OPENROUTER_API_KEY repository secret."
+            exit 1
+          fi
+
+      # ============================================================
+      # Checkout
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ============================================================
+      # Git configuration
+      # ============================================================
+
+      - name: Configure Git
+        shell: bash
+        run: |
+          git config user.name "AI Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # ============================================================
+      # Java
+      # ============================================================
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      # ============================================================
+      # Gradle
+      # ============================================================
+
+      - name: Make Gradle executable
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+
+      # ============================================================
+      # Create isolated AI branch
+      # ============================================================
+
+      - name: Create AI branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRANCH="ai-agent/${GITHUB_RUN_ID}"
+
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          git switch -c "$BRANCH"
+
+      # ============================================================
+      # Initial build
+      # ============================================================
+
+      - name: Run initial build
+        id: initial_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+
+          ./gradlew build --stacktrace 2>&1 | tee /tmp/gradle-build.log
+
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # AI repair loop
+      # ============================================================
+
+      - name: Run AI repair loop
+        if: steps.initial_build.outputs.exit_code != '0'
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          python3 <<'PY'
+
+          import json
+          import os
+          import subprocess
+          import textwrap
+          import urllib.request
+          import urllib.error
+
+
+          # ==========================================================
+          # Configuration
+          # ==========================================================
+
+          api_key = os.environ["OPENROUTER_API_KEY"]
+
+          model = os.environ["AI_MODEL"]
+
+          task = os.environ["TASK"]
+
+          max_attempts = int(os.environ["MAX_ATTEMPTS"])
+
+          root = os.getcwd()
+
+
+          # ==========================================================
+          # Directories that should never be sent to the AI
+          # ==========================================================
+
+          ignored_dirs = {
+              ".git",
+              ".gradle",
+              "build",
+              "node_modules",
+              ".venv",
+              "__pycache__",
+              ".idea"
+          }
+
+
+          # ==========================================================
+          # Source file types
+          # ==========================================================
+
+          allowed_suffixes = {
+              ".java",
+              ".kt",
+              ".kts",
+              ".groovy",
+              ".gradle",
+              ".properties",
+              ".toml",
+              ".json",
+              ".xml",
+              ".yaml",
+              ".yml",
+              ".md",
+              ".txt"
+          }
+
+
+          # ==========================================================
+          # Command helper
+          # ==========================================================
+
+          def run(cmd, check=False):
+
+              return subprocess.run(
+                  cmd,
+                  cwd=root,
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  check=check
+              )
+
+
+          # ==========================================================
+          # Collect project context
+          # ==========================================================
+
+          def project_context():
+
+              files = []
+
+              result = run(["git", "ls-files"])
+
+              for rel in result.stdout.splitlines():
+
+                  if not rel:
+                      continue
+
+                  parts = rel.split("/")
+
+                  if any(part in ignored_dirs for part in parts):
+                      continue
+
+                  path = os.path.join(root, rel)
+
+                  if not os.path.isfile(path):
+                      continue
+
+                  if os.path.getsize(path) > 150_000:
+                      continue
+
+                  if os.path.splitext(rel)[1].lower() in allowed_suffixes:
+                      files.append(rel)
+
+
+              chunks = []
+
+              total = 0
+
+              max_chars = 120_000
+
+
+              # Important project files first
+
+              priority = [
+                  "gradle.properties",
+                  "build.gradle.kts",
+                  "settings.gradle.kts",
+                  "gradle/libs.versions.toml"
+              ]
+
+
+              ordered = [
+                  x for x in priority
+                  if x in files
+              ]
+
+
+              ordered += [
+                  x for x in files
+                  if x not in ordered
+              ]
+
+
+              for rel in ordered:
+
+                  try:
+
+                      with open(
+                          os.path.join(root, rel),
+                          encoding="utf-8"
+                      ) as f:
+
+                          text = f.read()
+
+                  except Exception:
+
+                      continue
+
+
+                  piece = (
+                      f"\n===== FILE: {rel} =====\n"
+                      f"{text}\n"
+                  )
+
+
+                  if total + len(piece) > max_chars:
+                      break
+
+
+                  chunks.append(piece)
+
+                  total += len(piece)
+
+
+              return "".join(chunks)
+
+
+          # ==========================================================
+          # Call OpenRouter
+          # ==========================================================
+
+          def call_ai(prompt):
+
+              payload = {
+
+                  "model": model,
+
+                  "messages": [
+
+                      {
+                          "role": "system",
+
+                          "content": (
+                              "You are a senior software engineer "
+                              "working inside a Git repository. "
+
+                              "Your job is to make the smallest "
+                              "safe code changes required to satisfy "
+                              "the task and fix the current build failure. "
+
+                              "Preserve existing behavior. "
+
+                              "Do not change unrelated dependencies. "
+
+                              "Do not modify secrets. "
+
+                              "Do not modify GitHub workflow files. "
+
+                              "Do not modify gradle-wrapper files. "
+
+                              "Do not perform git commits or pushes. "
+
+                              "Return ONLY a unified diff suitable "
+                              "for git apply. "
+
+                              "If no change is needed, return an empty response."
+                          )
+                      },
+
+                      {
+                          "role": "user",
+                          "content": prompt
+                      }
+
+                  ],
+
+                  "temperature": 0.1
+              }
+
+
+              request = urllib.request.Request(
+
+                  "https://openrouter.ai/api/v1/chat/completions",
+
+                  data=json.dumps(payload).encode(),
+
+                  headers={
+
+                      "Authorization":
+                          f"Bearer {api_key}",
+
+                      "Content-Type":
+                          "application/json",
+
+                      "HTTP-Referer":
+                          f"https://github.com/"
+                          f"{os.environ['GITHUB_REPOSITORY']}",
+
+                      "X-Title":
+                          "GitHub AI Build Agent"
+                  },
+
+                  method="POST"
+              )
+
+
+              try:
+
+                  with urllib.request.urlopen(
+                      request,
+                      timeout=180
+                  ) as response:
+
+                      data = json.load(response)
+
+              except urllib.error.HTTPError as e:
+
+                  body = e.read().decode(
+                      errors="replace"
+                  )
+
+                  raise RuntimeError(
+                      f"OpenRouter HTTP {e.code}: "
+                      f"{body[:4000]}"
+                  )
+
+
+              return data[
+                  "choices"
+              ][0][
+                  "message"
+              ][
+                  "content"
+              ]
+
+
+          # ==========================================================
+          # Initial build error
+          # ==========================================================
+
+          previous_error = open(
+              "/tmp/gradle-build.log",
+              encoding="utf-8",
+              errors="replace"
+          ).read()
+
+
+          # ==========================================================
+          # AI repair loop
+          # ==========================================================
+
+          for attempt in range(
+              1,
+              max_attempts + 1
+          ):
+
+              print(
+                  f"\n===== AI ATTEMPT "
+                  f"{attempt}/{max_attempts} ====="
+              )
+
+
+              context = project_context()
+
+
+              diff = run([
+                  "git",
+                  "diff",
+                  "--",
+                  ".",
+                  ":(exclude).github/workflows"
+              ]).stdout
+
+
+              prompt = textwrap.dedent(
+                  f"""
+
+                  Repository:
+                  {os.environ['GITHUB_REPOSITORY']}
+
+
+                  Task:
+                  {task}
+
+
+                  This is AI repair attempt
+                  {attempt} of {max_attempts}.
+
+
+                  Current Gradle/build output:
+
+                  ----- BEGIN BUILD LOG -----
+
+                  {previous_error[-30000:]}
+
+                  ----- END BUILD LOG -----
+
+
+                  Current uncommitted diff:
+
+                  ----- BEGIN DIFF -----
+
+                  {diff[-20000:]}
+
+                  ----- END DIFF -----
+
+
+                  Relevant repository files:
+
+                  {context}
+
+
+                  Requirements:
+
+                  - Fix the actual cause of the build failure.
+                  - Make the minimum necessary changes.
+                  - Preserve existing behavior.
+                  - Keep Fabric and NeoForge concerns separated.
+                  - Do not modify .github/workflows.
+                  - Do not modify Gradle wrapper files.
+                  - Do not commit.
+                  - Do not push.
+                  - Do not add unrelated dependencies.
+                  - Do not change ASM unless absolutely required.
+                  - Do not perform broad refactoring.
+                  - Do not remove functionality just to make build pass.
+                  - Return ONLY a unified git diff.
+                  """
+              )
+
+
+              response = call_ai(prompt)
+
+
+              # ======================================================
+              # Extract unified diff
+              # ======================================================
+
+              start = response.find(
+                  "diff --git "
+              )
+
+
+              if start >= 0:
+
+                  patch = response[start:]
+
+              else:
+
+                  patch = response.strip()
+
+
+              if not patch:
+
+                  print(
+                      "AI returned no patch."
+                  )
+
+                  break
+
+
+              patch_file = "/tmp/ai.patch"
+
+
+              with open(
+                  patch_file,
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+
+                  f.write(patch)
+
+
+              # ======================================================
+              # Validate patch
+              # ======================================================
+
+              check = run([
+                  "git",
+                  "apply",
+                  "--check",
+                  patch_file
+              ])
+
+
+              if check.returncode != 0:
+
+                  print(
+                      "AI patch could not be applied:"
+                  )
+
+                  print(
+                      check.stdout[-10000:]
+                  )
+
+                  previous_error = check.stdout
+
+                  continue
+
+
+              # ======================================================
+              # Apply patch
+              # ======================================================
+
+              run([
+                  "git",
+                  "apply",
+                  "--whitespace=fix",
+                  patch_file
+              ], check=True)
+
+
+              # ======================================================
+              # Protect workflow files
+              # ======================================================
+
+              workflow_changes = run([
+                  "git",
+                  "diff",
+                  "--name-only",
+                  "--",
+                  ".github/workflows"
+              ]).stdout.strip()
+
+
+              if workflow_changes:
+
+                  print(
+                      "AI attempted to modify "
+                      "workflow files."
+                  )
+
+                  run([
+                      "git",
+                      "checkout",
+                      "--",
+                      ".github/workflows"
+                  ])
+
+
+              # ======================================================
+              # Check repository status
+              # ======================================================
+
+              status = run([
+                  "git",
+                  "status",
+                  "--short"
+              ]).stdout
+
+
+              print(status)
+
+
+              if not status.strip():
+
+                  print(
+                      "No repository changes were produced."
+                  )
+
+                  break
+
+
+              # ======================================================
+              # Build again
+              # ======================================================
+
+              build = run([
+                  "bash",
+                  "-lc",
+                  "./gradlew build --stacktrace"
+              ])
+
+
+              with open(
+                  "/tmp/gradle-build.log",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+
+                  f.write(build.stdout)
+
+
+              print(
+                  build.stdout[-30000:]
+              )
+
+
+              # ======================================================
+              # Build succeeded
+              # ======================================================
+
+              if build.returncode == 0:
+
+                  print(
+                      "BUILD PASSED."
+                  )
+
+                  break
+
+
+              # ======================================================
+              # Next AI iteration
+              # ======================================================
+
+              previous_error = build.stdout
+
+
+          else:
+
+              print(
+                  "AI repair loop exhausted."
+              )
+
+          PY
+
+      # ============================================================
+      # Final verification
+      # ============================================================
+
+      - name: Verify final build
+        id: final_build
+        shell: bash
+        run: |
+
+          set -o pipefail
+
+          ./gradlew build --stacktrace 2>&1 |
+            tee /tmp/final-build.log
+
+          echo "exit_code=${PIPESTATUS[0]}" \
+            >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # Protect important files
+      # ============================================================
+
+      - name: Check protected changes
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          echo "Changed files:"
+          git status --short
+
+
+          forbidden="$(
+            git diff --name-only -- \
+              '.github/workflows' \
+              'gradle/wrapper' \
+              '.gitignore'
+          )"
+
+
+          if [[ -n "${forbidden// }" ]]; then
+
+            echo "::error::AI changed protected files:"
+            echo "$forbidden"
+
+            exit 1
+
+          fi
+
+      # ============================================================
+      # Commit successful changes
+      # ============================================================
+
+      - name: Commit AI changes
+        if: >
+          steps.final_build.outputs.exit_code == '0'
+          &&
+          steps.initial_build.outputs.exit_code != '0'
+
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          git add -A
+
+
+          if git diff --cached --quiet; then
+
+            echo "No changes to commit."
+
+            exit 0
+
+          fi
+
+
+          git commit \
+            -m "fix: AI-assisted build repair"
+
+      # ============================================================
+      # Push AI branch
+      # ============================================================
+
+      - name: Push AI branch
+        if: >
+          steps.final_build.outputs.exit_code == '0'
+          &&
+          steps.initial_build.outputs.exit_code != '0'
+
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          git push \
+            --set-upstream \
+            origin \
+            "$BRANCH"
+
+      # ============================================================
+      # Create Pull Request
+      # ============================================================
+
+      - name: Create pull request
+        if: >
+          steps.final_build.outputs.exit_code == '0'
+          &&
+          steps.initial_build.outputs.exit_code != '0'
+
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+
+          gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$BRANCH" \
+            --title "AI agent: fix build" \
+            --body "$(cat <<'EOF'
+
+          ## AI-assisted build repair
+
+          This pull request was created by the AI build agent.
+
+          ### What happened
+
+          - Initial Gradle build failed.
+          - AI analyzed the build output.
+          - AI generated a minimal patch.
+          - The project was built again.
+          - Final `./gradlew build` passed.
+          - Protected workflow files were not modified.
+
+          ### Review
+
+          Please review the diff before merging.
+
+          EOF
+          )"
+
+      # ============================================================
+      # Upload logs
+      # ============================================================
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-agent-build-logs
+
+          path: |
+            /tmp/gradle-build.log
+            /tmp/final-build.log
+
+          if-no-files-found: ignore
+
+      # ============================================================
+      # Fail workflow if final build failed
+      # ============================================================
+
+      - name: Fail if final build failed
+        if: steps.final_build.outputs.exit_code != '0'
+        shell: bash
+        run: |
+
+          echo "::error::Final Gradle build failed."
+          echo "No pull request was created."
+
+          exit 1
