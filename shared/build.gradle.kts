@@ -13,6 +13,9 @@ dependencies {
 
     api(libs.pack.converter)
 
+    // Creative's Adventure component types expose Examination interfaces on the compile classpath.
+    compileOnly("net.kyori:examination-api:1.3.0")
+
     implementation(libs.auto.service)
     annotationProcessor(libs.auto.service)
 
