@@ -24,24 +24,35 @@ jobs:
         run: ./gradlew build
 
       - name: Prepare Geyser Locale Resources
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           git clone --depth 1 https://github.com/GeyserMC/languages.git runtime-test-languages
-          mkdir -p runtime-test
-          found=0
-          while IFS= read -r -d '' jarfile; do
-            found=1
-            echo "Injecting Geyser locales into $jarfile"
-            jar uf "$jarfile" -C runtime-test-languages texts
-          done < <(find "$HOME/.gradle/caches" -type f -name 'geyser-fabric*.jar' -print0 2>/dev/null)
-          if [ "$found" -eq 0 ]; then
-            echo 'Could not find the Geyser Fabric runtime jar in the Gradle cache.'
+          test -f runtime-test-languages/texts/en_US.properties
+
+          echo 'Locating the actual Geyser Fabric jar used by the Gradle runtime...'
+          geyser_jar=''
+          while IFS= read -r -d '' jar; do
+            if unzip -l "$jar" 2>/dev/null | grep -q 'org/geysermc/geyser/text/GeyserLocale.class'; then
+              geyser_jar="$jar"
+              break
+            fi
+          done < <(find "$HOME/.gradle/caches" -type f -name '*.jar' -print0)
+
+          if [ -z "$geyser_jar" ]; then
+            echo 'Could not find a Geyser jar containing GeyserLocale.class.'
+            find "$HOME/.gradle/caches" -type f -name '*geyser*.jar' -print | head -100
             exit 1
           fi
+
+          echo "Using Geyser runtime jar: $geyser_jar"
+          jar uf "$geyser_jar" -C runtime-test-languages texts
+          unzip -l "$geyser_jar" | grep 'languages/texts/en_US.properties'
 
       - name: Test Fabric 26.2 Server Startup
         timeout-minutes: 5
         run: |
+          set -euo pipefail
           mkdir -p runtime-test
           printf 'eula=true\n' > eula.txt
           ./gradlew :fabric:runServer --no-daemon > runtime-test/server.log 2>&1 &
