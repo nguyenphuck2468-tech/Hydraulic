@@ -26,8 +26,13 @@ jobs:
       - name: Prepare Geyser Locale Resources
         run: |
           git clone --depth 1 https://github.com/GeyserMC/languages.git runtime-test-languages
-          mkdir -p fabric/build/resources/main/languages
-          cp -a runtime-test-languages/. fabric/build/resources/main/languages/
+          mkdir -p runtime-test-languages
+          mkdir -p runtime-test
+          find .gradle fabric/build -type f -name 'geyser-fabric*.jar' -print0 2>/dev/null | while IFS= read -r -d '' jar; do
+            echo "Injecting Geyser locales into $jar"
+            jar uf "$jar" -C runtime-test-languages texts
+          done
+          find .gradle fabric/build -type f -name 'geyser-fabric*.jar' -print 2>/dev/null
 
       - name: Test Fabric 26.2 Server Startup
         timeout-minutes: 5
