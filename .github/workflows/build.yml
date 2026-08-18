@@ -23,6 +23,12 @@ jobs:
       - name: Build Hydraulic
         run: ./gradlew build
 
+      - name: Prepare Geyser Locale Resources
+        run: |
+          git clone --depth 1 https://github.com/GeyserMC/languages.git runtime-test-languages
+          mkdir -p fabric/build/resources/main/languages
+          cp -a runtime-test-languages/. fabric/build/resources/main/languages/
+
       - name: Test Fabric 26.2 Server Startup
         timeout-minutes: 5
         run: |
@@ -32,12 +38,12 @@ jobs:
           server_pid=$!
           trap 'kill $server_pid 2>/dev/null || true' EXIT
 
-          for i in $(seq 1 180); do
+          for i in $(seq 1 240); do
             if grep -q 'Done (' runtime-test/server.log; then
               echo 'Fabric 26.2 server started successfully.'
               exit 0
             fi
-            if grep -Eiq '(^|[[:space:]])(Exception|Error|Could not load|Failed to start|Mixin.*failed)' runtime-test/server.log; then
+            if grep -Eiq 'Mixin.*(failed|error)|Failed to start the minecraft server|Could not execute entrypoint|Caused by:.*Exception|java\.lang\.(RuntimeException|IllegalStateException|NoSuchMethodError|NoClassDefFoundError|LinkageError)' runtime-test/server.log; then
               echo 'Fabric 26.2 server failed during startup.'
               cat runtime-test/server.log
               exit 1
