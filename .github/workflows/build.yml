@@ -46,8 +46,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          jar_file=fabric/build/libs/hydraulic-fabric.jar
+
           test -s fabric/build/resources/main/languages/texts/en_US.properties
-          jar tf fabric/build/libs/hydraulic-fabric.jar | grep -Fx 'languages/texts/en_US.properties'
+          jar tf "$jar_file" | grep -Fx 'languages/texts/en_US.properties'
+
+          # Gradle's include() places libraries in the Fabric jar's nested
+          # META-INF/jars area. Verify the actual Examination API class is
+          # present there; checking only the development runtime can miss a
+          # production-jar packaging regression.
+          if jar tf "$jar_file" | grep -Fx 'net/kyori/examination/Examinable.class' >/dev/null; then
+            echo 'Examination API is present directly in the Hydraulic jar.'
+          else
+            found=false
+            while IFS= read -r nested; do
+              [ -n "$nested" ] || continue
+              tmpdir=$(mktemp -d)
+              if unzip -p "$jar_file" "$nested" > "$tmpdir/nested.jar" 2>/dev/null \
+                && jar tf "$tmpdir/nested.jar" | grep -Fx 'net/kyori/examination/Examinable.class' >/dev/null; then
+                echo "Examination API found in nested library: $nested"
+                found=true
+                rm -rf "$tmpdir"
+                break
+              fi
+              rm -rf "$tmpdir"
+            done < <(jar tf "$jar_file" | grep '^META-INF/jars/.*\.jar$' || true)
+
+            if [ "$found" != true ]; then
+              echo 'Production jar is missing net/kyori/examination/Examinable.class.'
+              exit 1
+            fi
+          fi
 
       - name: Runtime verification - Minecraft 26.2
         shell: bash
