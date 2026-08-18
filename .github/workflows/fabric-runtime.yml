@@ -1,0 +1,80 @@
+name: Fabric Runtime Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'fabric/**'
+      - 'shared/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/fabric-runtime.yml'
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Setup Gradle
+        uses: GeyserMC/actions/setup-gradle-composite@master
+        with:
+          setup-java_java-version: 25
+
+      - name: Accept EULA
+        run: |
+          mkdir -p fabric/run
+          printf 'eula=true\n' > fabric/run/eula.txt
+
+      - name: Start Fabric server
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew :fabric:runServer --args='--nogui' 2>&1 | tee server.log &
+          server_pid=$!
+
+          ready=0
+          for i in $(seq 1 150); do
+            if grep -q 'Done (' server.log; then
+              ready=1
+              break
+            fi
+
+            if grep -Eq 'Exception|Error:|Failed to start|Mixin.*ERROR' server.log; then
+              echo 'Server reported a fatal startup error:'
+              tail -n 120 server.log
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+              exit 1
+            fi
+
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo 'Server process exited before reaching the ready state.'
+              tail -n 160 server.log
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo 'Fabric server did not reach the ready state within 5 minutes.'
+            tail -n 200 server.log
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo 'Fabric 26.2 server reached the ready state.'
+          tail -n 100 server.log
+          kill "$server_pid" 2>/dev/null || true
+          wait "$server_pid" 2>/dev/null || true
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabric-runtime-log
+          path: server.log
+          if-no-files-found: ignore
