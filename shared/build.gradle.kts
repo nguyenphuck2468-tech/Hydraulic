@@ -10,6 +10,8 @@ dependencies {
         exclude(group = "io.netty")
         exclude(group = "io.netty.incubator")
     }
+    // Examinable is required by Kyori/Creative types exposed through the Geyser/PackConverter API.
+    compileOnly("net.kyori:examination-api:1.3.0")
 
     api(libs.pack.converter)
 
