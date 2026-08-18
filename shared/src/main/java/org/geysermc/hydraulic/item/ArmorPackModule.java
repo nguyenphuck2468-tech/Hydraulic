@@ -8,6 +8,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.equipment.Equippable;
@@ -32,12 +33,10 @@ import java.util.Optional;
 public class ArmorPackModule extends PackModule<ArmorPackModule> {
     private static final String BEDROCK_ARMOR_TEXTURE_LOCATION = "textures/entity/%s/equipment/%s/%s";
 
-    private static final Map<String, String> ATTACHABLE_MATERIALS = new HashMap<>() {
-        {
-            put("default", "armor");
-            put("enchanted", "armor_enchanted");
-        }
-    };
+    private static final Map<String, String> ATTACHABLE_MATERIALS = new HashMap<>() {{
+        put("default", "armor");
+        put("enchanted", "armor_enchanted");
+    }};
     private static final Scripts ATTACHABLE_SCRIPTS = new Scripts();
 
     static {
@@ -60,28 +59,26 @@ public class ArmorPackModule extends PackModule<ArmorPackModule> {
 
             EquipmentLayerType layerType = getEquipmentLayer(equippable.slot());
             if (layerType == null) {
-                // This might be something else... lets just check
                 Optional<HolderSet<EntityType<?>>> optionalEntityType = equippable.allowedEntities();
                 if (optionalEntityType.isPresent()) {
                     HolderSet<EntityType<?>> entityTypeHolderSet = optionalEntityType.get();
 
-                    if (entityTypeHolderSet.contains(BuiltInRegistries.ENTITY_TYPE.wrapAsHolder(EntityType.HORSE))) {
+                    if (entityTypeHolderSet.contains(BuiltInRegistries.ENTITY_TYPE.wrapAsHolder(EntityTypes.HORSE))) {
                         layerType = EquipmentLayerType.HORSE_BODY;
-                    } else if (entityTypeHolderSet.contains(BuiltInRegistries.ENTITY_TYPE.wrapAsHolder(EntityType.WOLF))) {
+                    } else if (entityTypeHolderSet.contains(BuiltInRegistries.ENTITY_TYPE.wrapAsHolder(EntityTypes.WOLF))) {
                         layerType = EquipmentLayerType.WOLF_BODY;
-                    } else if (entityTypeHolderSet.contains(BuiltInRegistries.ENTITY_TYPE.wrapAsHolder(EntityType.LLAMA))) {
+                    } else if (entityTypeHolderSet.contains(BuiltInRegistries.ENTITY_TYPE.wrapAsHolder(EntityTypes.LLAMA))) {
                         layerType = EquipmentLayerType.LLAMA_BODY;
                     }
                 }
 
-                if (layerType == null) { // We recheck as above can change how things go
-                    continue; // There is no layer we can give the bedrock currently, so we can skip this
+                if (layerType == null) {
+                    continue;
                 }
             }
 
             Identifier armorItemLocation = BuiltInRegistries.ITEM.getKey(armorItem);
-
-            Identifier armorTextureLocation = equippable.assetId().map(ResourceKey::identifier).orElseThrow(); // Checked above to ensure all armor processed has an asset id, so this shouldn't throw (This instead of get to prevent yellow lines)
+            Identifier armorTextureLocation = equippable.assetId().map(ResourceKey::identifier).orElseThrow();
 
             Equipment equipment = context.javaResourcePack().equipment(Key.key(armorTextureLocation.toString()));
             if (equipment == null) {
@@ -89,7 +86,7 @@ public class ArmorPackModule extends PackModule<ArmorPackModule> {
             }
             List<EquipmentLayer> layers = equipment.layers().get(layerType);
             if (layers == null || layers.isEmpty()) {
-                continue; // We have no layers that we can convert, so we can just skip this one
+                continue;
             }
             Key layerTexture = layers.getFirst().texture();
 
@@ -102,22 +99,16 @@ public class ArmorPackModule extends PackModule<ArmorPackModule> {
             description.scripts(ATTACHABLE_SCRIPTS);
             description.renderControllers(new String[] { "controller.render.armor" });
 
-            // Change the query to match the item
-            // This should always work as armour should have 2d item models
-            // If its 3d this will break as the item won't have the `item.` prefix
-            // TODO Register another attachable for 3d items? Or just work out which is correct from here
             Map<String, String> items = new HashMap<>() {{
                 put(armorItemLocation + "_item", "query.owner_identifier == 'minecraft:player'");
             }};
             description.item(items);
 
             EquipmentLayerType finalLayerType = layerType;
-            description.textures(new HashMap<>() {
-                {
-                    put("default", String.format(BEDROCK_ARMOR_TEXTURE_LOCATION, layerTexture.namespace(), finalLayerType.name().toLowerCase(), layerTexture.value()));
-                    put("enchanted", "textures/misc/enchanted_actor_glint");
-                }
-            });
+            description.textures(new HashMap<>() {{
+                put("default", String.format(BEDROCK_ARMOR_TEXTURE_LOCATION, layerTexture.namespace(), finalLayerType.name().toLowerCase(), layerTexture.value()));
+                put("enchanted", "textures/misc/enchanted_actor_glint");
+            }});
 
             String geometryType = "";
             switch (layerType) {
@@ -129,7 +120,7 @@ public class ArmorPackModule extends PackModule<ArmorPackModule> {
                     }
                 }
                 case EquipmentLayerType.HUMANOID_LEGGINGS -> geometryType = "geometry.player.armor.leggings";
-                case EquipmentLayerType.HORSE_BODY -> {} // TODO: Handle adding horse armor, might need to PR geyser for the slot
+                case EquipmentLayerType.HORSE_BODY -> {}
             }
 
             description.geometry(Map.of("default", geometryType));
