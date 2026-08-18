@@ -10,7 +10,7 @@
     "ext.MinecraftResourcePackReaderImplMixin",
     "ext.InventoryUtilsMixin",
     "ext.ModelSerializerMixin",
-    "ext.GeyserFabricPlatformMixin"
+    "ext.GeyserModBootstrapResourceMixin"
   ],
   "injectors": {
     "defaultRequire": 1
