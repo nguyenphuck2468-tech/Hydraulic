@@ -24,14 +24,14 @@ public class CreativeMappings {
             // region --- Construction ---
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.DOORS),
+                List.of(),
                 List.of(DoorBlock.class),
                 List.of(BlockTags.DOORS)
             ), new CreativeMapping(ItemGroup.DOORS, CreativeCategory.CONSTRUCTION));
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.FENCES),
+                List.of(),
                 List.of(FenceBlock.class),
                 List.of(BlockTags.FENCES)
             ), new CreativeMapping(ItemGroup.FENCES, CreativeCategory.CONSTRUCTION));
@@ -52,21 +52,21 @@ public class CreativeMappings {
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.SLABS),
+                List.of(),
                 List.of(SlabBlock.class),
                 List.of(BlockTags.SLABS)
             ), new CreativeMapping(ItemGroup.SLABS, CreativeCategory.CONSTRUCTION));
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.STAIRS),
+                List.of(),
                 List.of(StairBlock.class),
                 List.of(BlockTags.STAIRS)
             ), new CreativeMapping(ItemGroup.STAIRS, CreativeCategory.CONSTRUCTION));
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.TRAPDOORS),
+                List.of(),
                 List.of(TrapDoorBlock.class),
                 List.of(BlockTags.TRAPDOORS)
             ), new CreativeMapping(ItemGroup.TRAPDOORS, CreativeCategory.CONSTRUCTION));
@@ -89,7 +89,7 @@ public class CreativeMappings {
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.FLOWERS),
+                List.of(),
                 List.of(FlowerBlock.class, TallFlowerBlock.class),
                 List.of(BlockTags.FLOWERS, BlockTags.SMALL_FLOWERS)
             ), new CreativeMapping(ItemGroup.FLOWERS, CreativeCategory.NATURE));
@@ -108,7 +108,6 @@ public class CreativeMappings {
                 List.of(BlockTags.LOGS)
             ), new CreativeMapping(ItemGroup.LOGS, CreativeCategory.NATURE));
 
-            // TODO Remove, these are added differently to bedrock https://wiki.bedrock.dev/visuals/retexturing-spawn-eggs.html
             put(new CreativeMappingTarget(
                 List.of(SpawnEggItem.class),
                 List.of(),
@@ -125,9 +124,9 @@ public class CreativeMappings {
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.SAPLINGS),
+                List.of(),
                 List.of(SaplingBlock.class),
-                List.of(BlockTags.SAPLINGS)
+                List.of()
             ), new CreativeMapping(ItemGroup.SAPLINGS, CreativeCategory.NATURE));
             // endregion
 
@@ -154,7 +153,7 @@ public class CreativeMappings {
             ), new CreativeMapping(ItemGroup.HOES, CreativeCategory.EQUIPMENT));
 
             put(new CreativeMappingTarget(
-                List.of(), // No item class present, currently depends on the tag
+                List.of(),
                 List.of(ItemTags.PICKAXES),
                 List.of(),
                 List.of()
@@ -168,7 +167,7 @@ public class CreativeMappings {
             ), new CreativeMapping(ItemGroup.SHOVELS, CreativeCategory.EQUIPMENT));
 
             put(new CreativeMappingTarget(
-                List.of(), // No item class present, currently depends on the tag
+                List.of(),
                 List.of(ItemTags.SWORDS),
                 List.of(),
                 List.of()
@@ -199,7 +198,7 @@ public class CreativeMappings {
 
             put(new CreativeMappingTarget(
                 List.of(),
-                List.of(ItemTags.BUTTONS),
+                List.of(),
                 List.of(ButtonBlock.class),
                 List.of(BlockTags.BUTTONS)
             ), new CreativeMapping(ItemGroup.BUTTONS, CreativeCategory.ITEMS));
@@ -249,7 +248,7 @@ public class CreativeMappings {
             ), new CreativeMapping(CreativeCategory.NATURE));
 
             put(new CreativeMappingTarget(
-                List.of(BowItem.class, ShearsItem.class), // TODO: Armor item class is now missing, would require components to check or a tag
+                List.of(BowItem.class, ShearsItem.class),
                 List.of(),
                 List.of(),
                 List.of()
@@ -267,95 +266,59 @@ public class CreativeMappings {
 
     public static void setup(Item item, CustomItemBedrockOptions.Builder customItemOptions) {
         CreativeMapping mapping = getMapping(item);
-
-        if (mapping == null) {
-            return;
-        }
-
+        if (mapping == null) return;
         customItemOptions.creativeGroup(mapping.creativeGroup().group()).creativeCategory(mapping.creativeCategory());
     }
 
     public static void setupBlock(Block block, CustomItemBedrockOptions.Builder customItemOptions) {
         CreativeMapping mapping = getMapping(block);
-
-        if (mapping == null) {
-            return;
-        }
-
+        if (mapping == null) return;
         customItemOptions.creativeGroup(mapping.creativeGroup().group()).creativeCategory(mapping.creativeCategory());
     }
 
     public static void setupBlock(Block block, CustomBlockData.Builder customItemBuilder) {
         CreativeMapping mapping = getMapping(block);
-
-        if (mapping == null) {
-            return;
-        }
-
+        if (mapping == null) return;
         customItemBuilder.creativeGroup(mapping.creativeGroup().group()).creativeCategory(mapping.creativeCategory());
     }
 
     private static CreativeMapping getMapping(Item item) {
         Class<? extends Item> itemClass = item.getClass();
         ItemStack itemStack = item.getDefaultInstance();
-
         for (Map.Entry<CreativeMappingTarget, CreativeMapping> entry : CREATIVE_MAPPINGS.entrySet()) {
             CreativeMappingTarget target = entry.getKey();
-
-            // Check item classes
             if (!target.itemClasses().isEmpty()) {
-                if (target.itemClasses().contains(itemClass)) {
-                    return entry.getValue();
-                }
+                if (target.itemClasses().contains(itemClass)) return entry.getValue();
                 for (Class<? extends Item> targetItemClass : target.itemClasses()) {
-                    if (targetItemClass.isAssignableFrom(itemClass)) {
-                        return entry.getValue();
-                    }
+                    if (targetItemClass.isAssignableFrom(itemClass)) return entry.getValue();
                 }
             }
-
-            // Check item tags
             if (!target.itemTags().isEmpty()) {
                 for (TagKey<Item> tag : target.itemTags()) {
-                    if (itemStack.is(tag)) {
-                        return entry.getValue();
-                    }
+                    if (itemStack.is(tag)) return entry.getValue();
                 }
             }
         }
-
         return null;
     }
 
     private static CreativeMapping getMapping(Block block) {
         Class<? extends Block> blockClass = block.getClass();
         BlockState blockState = block.defaultBlockState();
-
         for (Map.Entry<CreativeMappingTarget, CreativeMapping> entry : CREATIVE_MAPPINGS.entrySet()) {
             CreativeMappingTarget target = entry.getKey();
-
-            // Check block classes
             if (!target.blockClasses().isEmpty()) {
-                if (target.blockClasses().contains(blockClass)) {
-                    return entry.getValue();
-                }
+                if (target.blockClasses().contains(blockClass)) return entry.getValue();
                 for (Class<? extends Block> targetBlockClass : target.blockClasses()) {
-                    if (targetBlockClass.isAssignableFrom(blockClass)) {
-                        return entry.getValue();
-                    }
+                    if (targetBlockClass.isAssignableFrom(blockClass)) return entry.getValue();
                 }
             }
-
-            // Check block tags
             if (!target.blockTags().isEmpty()) {
                 for (TagKey<Block> tag : target.blockTags()) {
-                    if (blockState.is(tag)) {
-                        return entry.getValue();
-                    }
+                    if (blockState.is(tag)) return entry.getValue();
                 }
             }
         }
-
         return null;
     }
 }
