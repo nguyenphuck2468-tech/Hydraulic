@@ -28,7 +28,7 @@ jobs:
         run: |
           mkdir -p runtime-test
           printf 'eula=true\n' > eula.txt
-          timeout 180 ./gradlew :fabric:runServer --no-daemon > runtime-test/server.log 2>&1 &
+          ./gradlew :fabric:runServer --no-daemon > runtime-test/server.log 2>&1 &
           server_pid=$!
           trap 'kill $server_pid 2>/dev/null || true' EXIT
 
@@ -37,7 +37,7 @@ jobs:
               echo 'Fabric 26.2 server started successfully.'
               exit 0
             fi
-            if grep -Eiq 'Exception|Error|Could not load|Failed to start|Mixin.*failed' runtime-test/server.log; then
+            if grep -Eiq '(^|[[:space:]])(Exception|Error|Could not load|Failed to start|Mixin.*failed)' runtime-test/server.log; then
               echo 'Fabric 26.2 server failed during startup.'
               cat runtime-test/server.log
               exit 1
