@@ -23,6 +23,29 @@ jobs:
       - name: Build Hydraulic
         run: ./gradlew build
 
+      - name: Runtime verification - Minecraft 26.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run
+          printf 'eula=true\n' > run/eula.txt
+          set +e
+          timeout --signal=TERM 90s ./gradlew :fabric:runServer --no-daemon 2>&1 | tee runtime-26.2.log
+          server_exit=${PIPESTATUS[0]}
+          set -e
+
+          if ! grep -Eq 'Done \(' runtime-26.2.log; then
+            echo 'Runtime verification failed: the dedicated server never reached Done.'
+            exit 1
+          fi
+
+          if ! grep -Eq 'Hydraulic|hydraulic' runtime-26.2.log; then
+            echo 'Runtime verification failed: Hydraulic was not present in the server startup log.'
+            exit 1
+          fi
+
+          echo "Runtime server exited with code ${server_exit} after verification."
+
       - name: Archive Artifacts
         uses: GeyserMC/actions/upload-multi-artifact@master
         if: success()
