@@ -14,8 +14,10 @@ import net.minecraft.world.level.material.PushReaction;
 import java.util.function.Function;
 
 public class ModBlocks {
+    public static final ResourceKey<Block> GOLDEN_BARREL_KEY = keyOfBlock("golden_barrel");
+
     public static final Block GOLDEN_BARREL = register(
-            "golden_barrel",
+            GOLDEN_BARREL_KEY,
             Block::new,
             BlockBehaviour.Properties.of()
                     .requiresCorrectToolForDrops()
@@ -24,12 +26,11 @@ public class ModBlocks {
             true
     );
 
-    private static Block register(String name, Function<BlockBehaviour.Properties, Block> blockFactory, BlockBehaviour.Properties properties, boolean shouldRegisterItem) {
-        ResourceKey<Block> blockKey = keyOfBlock(name);
+    private static Block register(ResourceKey<Block> blockKey, Function<BlockBehaviour.Properties, Block> blockFactory, BlockBehaviour.Properties properties, boolean shouldRegisterItem) {
         Block block = blockFactory.apply(properties.setId(blockKey));
 
         if (shouldRegisterItem) {
-            ResourceKey<Item> itemKey = keyOfItem(name);
+            ResourceKey<Item> itemKey = keyOfItem(blockKey.identifier().getPath());
 
             BlockItem blockItem = new BlockItem(block, new Item.Properties().setId(itemKey));
             Registry.register(BuiltInRegistries.ITEM, itemKey, blockItem);
