@@ -5,7 +5,7 @@ on:
     paths-ignore:
       - '.github/ISSUE_TEMPLATE/*.yml'
       - '.github/actions/build.yml'
-      - '.idea/copyright/*.xml' 
+      - '.idea/copyright/*.xml'
       - '.gitignore'
       - 'LICENSE'
       - 'README.md'
@@ -19,6 +19,15 @@ jobs:
         with:
           setup-java_java-version: 25
           setup-gradle_cache-read-only: true
+
+      - name: Fetch Geyser language resources
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/GeyserMC/languages.git .ci/geyser-languages
+          mkdir -p fabric/src/main/resources/languages/texts
+          cp .ci/geyser-languages/texts/*.properties fabric/src/main/resources/languages/texts/
+          test -s fabric/src/main/resources/languages/texts/en_US.properties
+          echo "Geyser English locale installed: $(wc -c < fabric/src/main/resources/languages/texts/en_US.properties) bytes"
 
       - name: Build Hydraulic
         run: ./gradlew build
@@ -56,5 +65,5 @@ jobs:
         uses: GeyserMC/actions/upload-multi-artifact@master
         if: success()
         with:
-          artifacts: | 
+          artifacts: |
             fabric/build/libs/hydraulic-fabric.jar
