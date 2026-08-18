@@ -14,13 +14,13 @@ config = "hydraulic.mixins.json"
 [[dependencies.hydraulic]]
     modId="neoforge"
     type="required"
-    versionRange="[26.2.0.1-beta,)"
+    versionRange="[26.2.0.42-beta,)"
     ordering="NONE"
     side="BOTH"
 
 [[dependencies.hydraulic]]
     modId="minecraft"
     type="required"
-    versionRange="[${minecraft_version},)"
+    versionRange="[26.2,26.3)"
     ordering="NONE"
     side="BOTH"
