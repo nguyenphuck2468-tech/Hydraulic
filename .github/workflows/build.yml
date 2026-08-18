@@ -20,6 +20,22 @@ jobs:
         with:
           setup-java_java-version: 25
 
+      - name: Prepare Geyser language resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf runtime-test-languages
+          git clone --depth 1 https://github.com/GeyserMC/languages.git runtime-test-languages
+
+          test -s runtime-test-languages/texts/en_US.properties
+
+          mkdir -p fabric/src/main/resources/languages/texts
+          cp runtime-test-languages/texts/*.properties fabric/src/main/resources/languages/texts/
+
+          echo "Installed $(find fabric/src/main/resources/languages/texts -name '*.properties' | wc -l) Geyser locale files."
+          test -s fabric/src/main/resources/languages/texts/en_US.properties
+
       - name: Build Hydraulic
         run: ./gradlew build
 
@@ -39,7 +55,12 @@ jobs:
             exit 1
           fi
 
-          if ! grep -Eq 'Hydraulic|hydraulic' runtime-26.2.log; then
+          if ! grep -Eq 'Loading Minecraft 26\.2' runtime-26.2.log; then
+            echo 'Runtime verification failed: Fabric did not report Minecraft 26.2.'
+            exit 1
+          fi
+
+          if ! grep -Eq 'hydraulic|Hydraulic' runtime-26.2.log; then
             echo 'Runtime verification failed: Hydraulic was not present in the server startup log.'
             exit 1
           fi
