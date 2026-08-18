@@ -1,43 +1,55 @@
-name: AI Developer Agent - Upgrade Build Fix
+name: AI Developer Agent - Minecraft 26.2
 
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Task for the AI developer agent"
+        description: "Task for the AI developer"
         required: true
-        default: "Upgrade the project to Minecraft 26.2 and improve Geyser/Bedrock compatibility while preserving existing functionality."
+        default: |
+          Upgrade Hydraulic to Minecraft 26.2.
+          Update Fabric, NeoForge and Geyser compatibility.
+          Preserve existing functionality and improve stability.
+          Analyze the whole repository, make the required source/dependency changes,
+          build the project, fix any errors automatically, and continue until the
+          final build passes.
 
       max_attempts:
-        description: "Maximum AI repair attempts"
+        description: "Maximum AI attempts"
         required: false
-        default: "5"
+        default: "8"
+
+      branch:
+        description: "AI development branch"
+        required: false
+        default: "ai/minecraft-26.2-geyser"
 
 permissions:
   contents: write
 
 concurrency:
-  group: ai-agent-${{ github.repository }}-${{ github.ref }}
+  group: ai-developer-${{ github.repository }}-${{ inputs.branch }}
   cancel-in-progress: false
 
 jobs:
-  ai-agent:
+  ai-developer:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     env:
       AI_MODEL: ${{ vars.AI_MODEL || 'openai/gpt-4.1-mini' }}
-      MAX_ATTEMPTS: ${{ inputs.max_attempts || '5' }}
+      MAX_ATTEMPTS: ${{ inputs.max_attempts || '8' }}
       TASK: ${{ inputs.task }}
+      AI_BRANCH: ${{ inputs.branch }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
     steps:
 
       # ============================================================
-      # Validate API key
+      # Validate secret
       # ============================================================
 
-      - name: Validate AI secret
+      - name: Validate OpenRouter API key
         shell: bash
         run: |
           set -euo pipefail
@@ -48,17 +60,16 @@ jobs:
           fi
 
       # ============================================================
-      # Checkout
+      # Checkout base repository
       # ============================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
       # ============================================================
-      # Configure Git
+      # Git configuration
       # ============================================================
 
       - name: Configure Git
@@ -69,11 +80,56 @@ jobs:
           git config user.name "AI Developer Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git fetch --all --prune
+
+      # ============================================================
+      # Find or create AI branch
+      # ============================================================
+
+      - name: Find or create AI branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BRANCH="${AI_BRANCH}"
+
+          echo "=========================================="
+          echo "AI DEVELOPMENT BRANCH"
+          echo "=========================================="
+          echo "Branch: $BRANCH"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+
+            echo "Existing remote branch found."
+            echo "Checking out existing branch..."
+
+            git fetch origin "$BRANCH:$BRANCH"
+            git switch "$BRANCH"
+
+          else
+
+            echo "Remote branch does not exist."
+            echo "Creating new branch from current base..."
+
+            git switch -c "$BRANCH"
+
+          fi
+
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Current branch:"
+          git branch --show-current
+
+          echo ""
+          echo "Current commit:"
+          git rev-parse --short HEAD
+
       # ============================================================
       # Java 25
       # ============================================================
 
-      - name: Set up Java
+      - name: Set up Java 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -88,34 +144,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           chmod +x ./gradlew
 
-      # ============================================================
-      # Create / select AI branch
-      # ============================================================
-
-      - name: Prepare AI branch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          BRANCH="ai-agent/${GITHUB_RUN_ID}"
-
-          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
-
-          echo "AI branch: $BRANCH"
-
-          git fetch origin --prune
-
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "Remote branch already exists."
-
-            git switch -C "$BRANCH" "origin/$BRANCH"
-          else
-            echo "Creating new AI branch."
-
-            git switch -c "$BRANCH"
-          fi
+          ./gradlew --version
 
       # ============================================================
       # Initial build
@@ -126,22 +158,18 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          set +e
+          set -o pipefail
 
           ./gradlew build --stacktrace 2>&1 |
-            tee /tmp/gradle-build.log
+            tee /tmp/initial-build.log
 
-          code=${PIPESTATUS[0]}
-
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-
-          exit 0
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       # ============================================================
-      # AI Developer Loop
+      # AI development loop
       # ============================================================
 
-      - name: AI developer loop
+      - name: AI development loop
         shell: bash
         run: |
 
@@ -151,11 +179,11 @@ jobs:
 
           import json
           import os
+          import re
           import subprocess
           import textwrap
           import urllib.request
           import urllib.error
-          import time
 
 
           # ==========================================================
@@ -170,11 +198,19 @@ jobs:
 
           TASK = os.environ["TASK"]
 
-          MAX_ATTEMPTS = int(
-              os.environ["MAX_ATTEMPTS"]
-          )
+          MAX_ATTEMPTS = int(os.environ["MAX_ATTEMPTS"])
 
-          MAX_OUTPUT_TOKENS = 20000
+          BRANCH = os.environ["AI_BRANCH"]
+
+
+          # Keep the prompt reasonably small.
+          MAX_CONTEXT_CHARS = 60000
+
+          MAX_BUILD_LOG_CHARS = 24000
+
+          MAX_DIFF_CHARS = 12000
+
+          MAX_OUTPUT_TOKENS = 12000
 
 
           # ==========================================================
@@ -194,7 +230,7 @@ jobs:
 
 
           # ==========================================================
-          # Relevant source files
+          # Files AI is allowed to inspect
           # ==========================================================
 
           ALLOWED_SUFFIXES = {
@@ -215,14 +251,21 @@ jobs:
 
 
           # ==========================================================
+          # Files AI must never modify
+          # ==========================================================
+
+          PROTECTED_PATHS = [
+              ".github/workflows/",
+              "gradle/wrapper/",
+              ".gitignore"
+          ]
+
+
+          # ==========================================================
           # Command helper
           # ==========================================================
 
-          def run(
-              cmd,
-              check=False,
-              timeout=None
-          ):
+          def run(cmd, check=False):
 
               return subprocess.run(
                   cmd,
@@ -230,24 +273,23 @@ jobs:
                   text=True,
                   stdout=subprocess.PIPE,
                   stderr=subprocess.STDOUT,
-                  check=check,
-                  timeout=timeout
+                  check=check
               )
 
 
           # ==========================================================
-          # Collect repository files
+          # Project file collection
           # ==========================================================
 
           def collect_files():
 
-              result = run(
-                  ["git", "ls-files"]
-              )
+              result = run(["git", "ls-files"])
 
               files = []
 
               for rel in result.stdout.splitlines():
+
+                  rel = rel.strip()
 
                   if not rel:
                       continue
@@ -260,15 +302,7 @@ jobs:
                   ):
                       continue
 
-                  if rel.startswith(
-                      ".github/workflows/"
-                  ):
-                      continue
-
-                  path = os.path.join(
-                      ROOT,
-                      rel
-                  )
+                  path = os.path.join(ROOT, rel)
 
                   if not os.path.isfile(path):
                       continue
@@ -278,12 +312,10 @@ jobs:
                   except OSError:
                       continue
 
-                  if size > 150_000:
+                  if size > 150000:
                       continue
 
-                  suffix = os.path.splitext(
-                      rel
-                  )[1].lower()
+                  suffix = os.path.splitext(rel)[1].lower()
 
                   if suffix in ALLOWED_SUFFIXES:
                       files.append(rel)
@@ -292,7 +324,7 @@ jobs:
 
 
           # ==========================================================
-          # Build project context
+          # Project context
           # ==========================================================
 
           def project_context():
@@ -303,19 +335,25 @@ jobs:
 
                   "gradle.properties",
 
-                  "settings.gradle.kts",
-
-                  "settings.gradle",
+                  "build.gradle",
 
                   "build.gradle.kts",
 
-                  "build.gradle",
+                  "settings.gradle",
+
+                  "settings.gradle.kts",
 
                   "gradle/libs.versions.toml",
 
+                  "fabric/build.gradle",
+
                   "fabric/build.gradle.kts",
 
+                  "neoforge/build.gradle",
+
                   "neoforge/build.gradle.kts",
+
+                  "shared/build.gradle",
 
                   "shared/build.gradle.kts",
 
@@ -329,7 +367,7 @@ jobs:
 
               for item in priority:
 
-                  if item in files:
+                  if item in files and item not in ordered:
                       ordered.append(item)
 
               for item in files:
@@ -341,14 +379,9 @@ jobs:
 
               total = 0
 
-              MAX_CHARS = 80000
-
               for rel in ordered:
 
-                  path = os.path.join(
-                      ROOT,
-                      rel
-                  )
+                  path = os.path.join(ROOT, rel)
 
                   try:
 
@@ -359,25 +392,18 @@ jobs:
                           errors="replace"
                       ) as f:
 
-                          content = f.read()
+                          text = f.read()
 
                   except Exception:
 
                       continue
 
                   piece = (
-                      "\n"
-                      "==================================================\n"
-                      f"FILE: {rel}\n"
-                      "==================================================\n"
-                      f"{content}\n"
+                      f"\n===== FILE: {rel} =====\n"
+                      f"{text}\n"
                   )
 
-                  if (
-                      total +
-                      len(piece)
-                      > MAX_CHARS
-                  ):
+                  if total + len(piece) > MAX_CONTEXT_CHARS:
                       break
 
                   chunks.append(piece)
@@ -388,7 +414,24 @@ jobs:
 
 
           # ==========================================================
-          # Call OpenRouter
+          # Current Git diff
+          # ==========================================================
+
+          def current_diff():
+
+              result = run([
+                  "git",
+                  "diff",
+                  "--",
+                  ".",
+                  ":(exclude).github/workflows"
+              ])
+
+              return result.stdout[-MAX_DIFF_CHARS:]
+
+
+          # ==========================================================
+          # OpenRouter request
           # ==========================================================
 
           def call_ai(prompt):
@@ -402,50 +445,70 @@ jobs:
                       {
                           "role": "system",
 
-                          "content": (
-                              "You are a senior Minecraft mod "
-                              "developer and repository maintainer. "
+                          "content": textwrap.dedent(
+                              """
+                              You are an expert senior Minecraft mod engineer.
 
-                              "You are working directly against "
-                              "a real Git repository. "
+                              You are working directly on a Git repository.
 
-                              "Analyze the provided source code, "
-                              "build output and task carefully. "
+                              Your task is to upgrade and repair the project
+                              while preserving existing functionality.
 
-                              "Make safe, minimal and technically "
-                              "correct changes. "
+                              IMPORTANT OUTPUT RULE:
 
-                              "Preserve existing functionality. "
+                              Return ONLY a valid unified git diff.
 
-                              "Do not blindly upgrade dependencies. "
+                              The response MUST start with:
 
-                              "Do not remove functionality merely "
-                              "to make the build pass. "
+                              diff --git
 
-                              "Keep Fabric and NeoForge implementations "
-                              "properly separated. "
+                              Do NOT return:
+                              - Markdown
+                              - ```diff
+                              - explanations
+                              - analysis
+                              - headings
+                              - logs
+                              - comments outside the patch
+                              - AI attempt messages
 
-                              "Pay particular attention to Minecraft "
-                              "version compatibility, mappings, "
-                              "Fabric Loader, Fabric API, NeoForge, "
-                              "Geyser compatibility, resource packs, "
-                              "items, blocks, models and networking. "
+                              If no change is required, return an empty response.
 
-                              "Do not modify secrets. "
+                              The patch must be directly usable with:
 
-                              "Do not modify GitHub workflow files. "
+                              git apply
 
-                              "Do not modify Gradle wrapper files. "
+                              Never modify:
+                              .github/workflows/
+                              gradle/wrapper/
+                              .gitignore
 
-                              "Do not commit or push. "
+                              Never modify secrets.
 
-                              "Return ONLY a unified git diff "
-                              "that can be applied with git apply. "
+                              Never commit.
+
+                              Never push.
+
+                              Preserve Fabric and NeoForge separation.
+
+                              Do not remove functionality merely to make
+                              the build pass.
+
+                              Do not perform unrelated refactoring.
+
+                              Prefer current APIs over deprecated APIs when
+                              upgrading them is relevant.
+
+                              For Minecraft upgrades, inspect dependency
+                              compatibility carefully instead of blindly
+                              changing every version.
+                              """
                           )
                       },
 
                       {
                           "role": "user",
+
                           "content": prompt
                       }
 
@@ -462,9 +525,7 @@ jobs:
 
                   "https://openrouter.ai/api/v1/chat/completions",
 
-                  data=json.dumps(
-                      payload
-                  ).encode(),
+                  data=json.dumps(payload).encode("utf-8"),
 
                   headers={
 
@@ -475,18 +536,15 @@ jobs:
                           "application/json",
 
                       "HTTP-Referer":
-                          "https://github.com/"
-                          + os.environ[
-                              "GITHUB_REPOSITORY"
-                          ],
+                          f"https://github.com/"
+                          f"{os.environ['GITHUB_REPOSITORY']}",
 
                       "X-Title":
-                          "Minecraft AI Developer Agent"
+                          "Hydraulic Minecraft 26.2 AI Developer"
 
                   },
 
                   method="POST"
-
               )
 
 
@@ -494,12 +552,10 @@ jobs:
 
                   with urllib.request.urlopen(
                       request,
-                      timeout=300
+                      timeout=240
                   ) as response:
 
-                      data = json.load(
-                          response
-                      )
+                      data = json.load(response)
 
               except urllib.error.HTTPError as e:
 
@@ -508,26 +564,19 @@ jobs:
                   )
 
                   raise RuntimeError(
-                      "OpenRouter HTTP "
-                      f"{e.code}: "
+                      f"OpenRouter HTTP {e.code}: "
                       f"{body[:5000]}"
                   )
 
 
               try:
 
-                  return data[
-                      "choices"
-                  ][0][
-                      "message"
-                  ][
-                      "content"
-                  ]
+                  return data["choices"][0]["message"]["content"]
 
               except Exception:
 
                   raise RuntimeError(
-                      "Unexpected OpenRouter response:\n"
+                      "Invalid OpenRouter response:\n"
                       + json.dumps(
                           data,
                           indent=2
@@ -536,224 +585,221 @@ jobs:
 
 
           # ==========================================================
-          # Read build log
+          # Extract clean unified diff
           # ==========================================================
 
-          build_log_path = (
-              "/tmp/gradle-build.log"
-          )
+          def extract_patch(response):
 
-          if os.path.exists(
-              build_log_path
-          ):
+              if not response:
+                  return ""
 
-              previous_output = open(
-                  build_log_path,
+              response = response.strip()
+
+              # Remove accidental markdown fences.
+
+              response = re.sub(
+                  r"^```(?:diff|patch)?\s*",
+                  "",
+                  response,
+                  flags=re.IGNORECASE
+              )
+
+              response = re.sub(
+                  r"\s*```\s*$",
+                  "",
+                  response
+              )
+
+              start = response.find("diff --git")
+
+              if start < 0:
+
+                  return ""
+
+              patch = response[start:]
+
+              # Remove trailing markdown fence.
+
+              fence = patch.find("\n```")
+
+              if fence >= 0:
+                  patch = patch[:fence]
+
+              # Remove common accidental AI footer.
+
+              patch = patch.rstrip()
+
+              return patch
+
+
+          # ==========================================================
+          # Initial state
+          # ==========================================================
+
+          if os.path.exists("/tmp/initial-build.log"):
+
+              previous_log = open(
+                  "/tmp/initial-build.log",
                   encoding="utf-8",
                   errors="replace"
               ).read()
 
           else:
 
-              previous_output = ""
+              previous_log = ""
 
 
           # ==========================================================
           # AI development loop
           # ==========================================================
 
-          for attempt in range(
-              1,
-              MAX_ATTEMPTS + 1
-          ):
+          for attempt in range(1, MAX_ATTEMPTS + 1):
 
               print()
-              print(
-                  "=================================================="
-              )
+              print("=" * 60)
               print(
                   f"AI DEVELOPMENT ATTEMPT "
                   f"{attempt}/{MAX_ATTEMPTS}"
               )
-              print(
-                  "=================================================="
-              )
-
+              print("=" * 60)
 
               context = project_context()
 
-
-              current_diff = run([
-                  "git",
-                  "diff",
-                  "--",
-                  ".",
-                  ":(exclude).github/workflows",
-                  ":(exclude)gradle/wrapper"
-              ]).stdout
-
-
-              status = run([
-                  "git",
-                  "status",
-                  "--short"
-              ]).stdout
-
+              diff = current_diff()
 
               prompt = textwrap.dedent(
                   f"""
-
                   Repository:
                   {os.environ['GITHUB_REPOSITORY']}
 
-                  Task:
+                  Current branch:
+                  {BRANCH}
+
+                  Main task:
                   {TASK}
 
-                  AI development attempt:
-                  {attempt}/{MAX_ATTEMPTS}
+                  This is attempt {attempt} of {MAX_ATTEMPTS}.
 
+                  OBJECTIVE:
 
-                  IMPORTANT OBJECTIVE:
+                  Analyze the relevant repository source and perform
+                  the requested Minecraft 26.2 upgrade.
 
-                  This is NOT only a build-fix task.
+                  In particular:
 
-                  If the existing build already passes,
-                  perform the requested upgrade or improvement.
+                  - Upgrade Minecraft compatibility to 26.2.
+                  - Update Fabric compatibility where required.
+                  - Update NeoForge compatibility where required.
+                  - Update Geyser-related integration where required.
+                  - Preserve Bedrock compatibility through Geyser.
+                  - Preserve existing Hydraulic functionality.
+                  - Review deprecated API usage related to the upgrade.
+                  - Review dependency versions.
+                  - Keep Fabric and NeoForge implementations separated.
+                  - Improve stability rather than merely making Gradle pass.
 
-                  If the build fails, fix the actual cause.
+                  If the current build is failing:
 
-                  After making changes, the repository must build
-                  successfully.
+                  - Identify the actual root cause.
+                  - Fix it.
+                  - Do not hide or suppress the failure.
 
+                  If the current build already succeeds:
+
+                  - Continue the requested upgrade work.
+                  - Do not stop simply because Gradle passes.
+
+                  After every patch the repository will be built again.
 
                   CURRENT BUILD OUTPUT:
 
-                  ---------------- BUILD OUTPUT ----------------
+                  ----- BEGIN BUILD LOG -----
 
-                  {previous_output[-15000:]}
+                  {previous_log[-MAX_BUILD_LOG_CHARS:]}
 
-                  ------------------------------------------------
-
-
-                  CURRENT GIT STATUS:
-
-                  {status}
+                  ----- END BUILD LOG -----
 
 
-                  CURRENT DIFF:
+                  CURRENT UNCOMMITTED DIFF:
 
-                  ---------------- DIFF ----------------
+                  ----- BEGIN DIFF -----
 
-                  {current_diff[-10000:]}
+                  {diff}
 
-                  ------------------------------------------------
+                  ----- END DIFF -----
 
 
-                  REPOSITORY SOURCE:
+                  REPOSITORY CONTEXT:
 
                   {context}
 
 
-                  REQUIREMENTS:
+                  HARD REQUIREMENTS:
 
-                  - Read and understand the available repository
-                    source before changing code.
-
-                  - Perform the requested task rather than merely
-                    fixing unrelated warnings.
-
-                  - If upgrading Minecraft, verify every relevant
-                    version declaration.
-
-                  - Check Gradle properties.
-
-                  - Check libs.versions.toml.
-
-                  - Check Fabric metadata.
-
-                  - Check NeoForge metadata.
-
-                  - Check shared code.
-
-                  - Check Fabric-specific code.
-
-                  - Check NeoForge-specific code.
-
-                  - Check resource-pack code.
-
-                  - Check Geyser-related integration.
-
-                  - Check Minecraft-version-specific APIs.
-
-                  - Check mappings and dependency compatibility.
-
-                  - Fix deprecated APIs when they are directly
-                    related to the requested upgrade.
-
-                  - Preserve existing behavior.
-
-                  - Do not remove features simply to make the
-                    build pass.
-
-                  - Do not introduce unnecessary dependencies.
-
-                  - Do not perform broad unrelated refactoring.
-
-                  - Do not change ASM unless actually required.
-
-                  - Do not modify .github/workflows.
-
-                  - Do not modify Gradle wrapper files.
-
+                  - Return ONLY a valid unified git diff.
+                  - The response must begin with "diff --git".
+                  - Do not use markdown fences.
+                  - Do not include explanations.
+                  - Do not include logs.
+                  - Do not modify .github/workflows/.
+                  - Do not modify gradle/wrapper/.
+                  - Do not modify .gitignore.
                   - Do not modify secrets.
-
                   - Do not commit.
-
                   - Do not push.
-
-                  - Return ONLY a unified git diff.
-
-                  If no changes are necessary, return an empty response.
+                  - Do not remove existing features.
+                  - Do not make unrelated refactors.
+                  - Do not blindly upgrade unrelated dependencies.
+                  - Do not change ASM unless required by compatibility.
+                  - Keep the change focused on Minecraft 26.2,
+                    Geyser compatibility, stability and actual build/runtime
+                    compatibility.
                   """
               )
 
+              try:
 
-              response = call_ai(
-                  prompt
-              )
+                  response = call_ai(prompt)
+
+              except Exception as e:
+
+                  print("AI request failed:")
+                  print(str(e))
+
+                  previous_log = (
+                      "AI REQUEST FAILURE:\n"
+                      + str(e)
+                  )
+
+                  continue
 
 
-              # ======================================================
-              # Extract patch
-              # ======================================================
-
-              start = response.find(
-                  "diff --git "
-              )
-
-
-              if start >= 0:
-
-                  patch = response[start:]
-
-              else:
-
-                  patch = response.strip()
-
+              patch = extract_patch(response)
 
               if not patch:
 
                   print(
-                      "AI returned no patch."
+                      "AI did not return a valid unified diff."
                   )
 
-                  break
+                  previous_log = textwrap.dedent(
+                      """
+                      The previous AI response was invalid.
+
+                      Return ONLY a unified git diff.
+
+                      It MUST start with:
+                      diff --git
+
+                      Do not include markdown fences,
+                      explanations, logs, headings or analysis.
+                      """
+                  )
+
+                  continue
 
 
-              patch_file = (
-                  "/tmp/ai.patch"
-              )
-
+              patch_file = "/tmp/ai.patch"
 
               with open(
                   patch_file,
@@ -761,7 +807,7 @@ jobs:
                   encoding="utf-8"
               ) as f:
 
-                  f.write(patch)
+                  f.write(patch + "\n")
 
 
               # ======================================================
@@ -772,22 +818,25 @@ jobs:
                   "git",
                   "apply",
                   "--check",
+                  "--recount",
                   patch_file
               ])
 
 
               if check.returncode != 0:
 
-                  print(
-                      "AI patch failed validation:"
-                  )
+                  print()
+                  print("AI PATCH FAILED VALIDATION")
+                  print(check.stdout[-12000:])
 
-                  print(
-                      check.stdout[-10000:]
-                  )
-
-                  previous_output = (
-                      check.stdout
+                  previous_log = (
+                      "The previous AI-generated patch failed "
+                      "git apply validation.\n\n"
+                      "git apply output:\n\n"
+                      + check.stdout[-12000:]
+                      + "\n\n"
+                      "Generate a NEW valid unified diff. "
+                      "Do not repeat the malformed patch."
                   )
 
                   continue
@@ -797,78 +846,131 @@ jobs:
               # Apply patch
               # ======================================================
 
-              run([
+              apply_result = run([
                   "git",
                   "apply",
                   "--whitespace=fix",
+                  "--recount",
                   patch_file
-              ], check=True)
+              ])
+
+
+              if apply_result.returncode != 0:
+
+                  print()
+                  print("AI PATCH COULD NOT BE APPLIED")
+                  print(apply_result.stdout[-12000:])
+
+                  previous_log = (
+                      "The generated patch passed validation but "
+                      "could not be applied.\n\n"
+                      + apply_result.stdout[-12000:]
+                  )
+
+                  continue
 
 
               # ======================================================
-              # Ensure protected files unchanged
+              # Protect workflow files
               # ======================================================
 
-              protected = run([
+              workflow_changes = run([
                   "git",
                   "diff",
                   "--name-only",
                   "--",
-                  ".github/workflows",
-                  "gradle/wrapper",
-                  ".gitignore"
+                  ".github/workflows"
               ]).stdout.strip()
 
 
-              if protected:
+              if workflow_changes:
 
                   print(
-                      "AI attempted to modify "
-                      "protected files:"
+                      "AI attempted to modify workflow files."
                   )
-
-                  print(protected)
 
                   run([
                       "git",
-                      "checkout",
+                      "restore",
                       "--",
-                      ".github/workflows",
-                      "gradle/wrapper",
-                      ".gitignore"
+                      ".github/workflows"
                   ])
 
 
               # ======================================================
-              # Show changes
+              # Protect Gradle wrapper
               # ======================================================
 
-              status = run([
+              wrapper_changes = run([
                   "git",
-                  "status",
-                  "--short"
-              ]).stdout
+                  "diff",
+                  "--name-only",
+                  "--",
+                  "gradle/wrapper"
+              ]).stdout.strip()
 
-              print(status)
+
+              if wrapper_changes:
+
+                  print(
+                      "AI attempted to modify Gradle wrapper."
+                  )
+
+                  run([
+                      "git",
+                      "restore",
+                      "--",
+                      "gradle/wrapper"
+                  ])
 
 
               # ======================================================
-              # Build
+              # Protect .gitignore
               # ======================================================
 
+              gitignore_changes = run([
+                  "git",
+                  "diff",
+                  "--name-only",
+                  "--",
+                  ".gitignore"
+              ]).stdout.strip()
+
+
+              if gitignore_changes:
+
+                  print(
+                      "AI attempted to modify .gitignore."
+                  )
+
+                  run([
+                      "git",
+                      "restore",
+                      "--",
+                      ".gitignore"
+                  ])
+
+
+              print()
+              print("Current changes:")
               print(
-                  "Running Gradle build..."
+                  run([
+                      "git",
+                      "status",
+                      "--short"
+                  ]).stdout
               )
 
 
-              build = run(
-                  [
-                      "bash",
-                      "-lc",
-                      "./gradlew build --stacktrace"
-                  ],
-                  timeout=900
-              )
+              # ======================================================
+              # Build after AI change
+              # ======================================================
+
+              build = run([
+                  "bash",
+                  "-lc",
+                  "./gradlew build --stacktrace"
+              ])
 
 
               with open(
@@ -877,13 +979,12 @@ jobs:
                   encoding="utf-8"
               ) as f:
 
-                  f.write(
-                      build.stdout
-                  )
+                  f.write(build.stdout)
 
 
+              print()
               print(
-                  build.stdout[-20000:]
+                  build.stdout[-30000:]
               )
 
 
@@ -894,15 +995,9 @@ jobs:
               if build.returncode == 0:
 
                   print()
-                  print(
-                      "=================================================="
-                  )
-                  print(
-                      "BUILD PASSED"
-                  )
-                  print(
-                      "=================================================="
-                  )
+                  print("=" * 60)
+                  print("BUILD PASSED")
+                  print("=" * 60)
 
                   break
 
@@ -913,59 +1008,46 @@ jobs:
 
               print()
               print(
-                  "BUILD FAILED."
+                  "BUILD FAILED - sending error back to AI."
               )
 
-              print(
-                  "AI will analyze the new build output."
-              )
-
-
-              previous_output = (
-                  build.stdout
-              )
-
-
-              time.sleep(2)
-
+              previous_log = build.stdout
 
           else:
 
-              print(
-                  "Maximum AI attempts exhausted."
-              )
-
-              raise SystemExit(1)
+              print()
+              print("=" * 60)
+              print("MAXIMUM AI ATTEMPTS EXHAUSTED")
+              print("=" * 60)
 
           PY
 
       # ============================================================
-      # Final build verification
+      # Final build
       # ============================================================
 
-      - name: Final build verification
+      - name: Final verification build
         id: final_build
         shell: bash
         run: |
-          set +e
+          set -o pipefail
 
           ./gradlew build --stacktrace 2>&1 |
             tee /tmp/final-build.log
 
-          code=${PIPESTATUS[0]}
-
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-
-          exit 0
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       # ============================================================
-      # Verify protected files
+      # Check protected files
       # ============================================================
 
       - name: Verify protected files
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Changed files:"
+          git status --short
 
           forbidden="$(
             git diff --name-only -- \
@@ -975,16 +1057,17 @@ jobs:
           )"
 
           if [[ -n "${forbidden// }" ]]; then
-            echo "::error::AI modified protected files:"
+            echo "::error::Protected files were modified:"
             echo "$forbidden"
             exit 1
           fi
 
       # ============================================================
-      # Show final changes
+      # Show final diff
       # ============================================================
 
       - name: Show final changes
+        if: always()
         shell: bash
         run: |
           echo "=========================================="
@@ -993,14 +1076,14 @@ jobs:
 
           git branch --show-current
 
-          echo
+          echo ""
           echo "=========================================="
           echo "CHANGED FILES"
           echo "=========================================="
 
           git status --short
 
-          echo
+          echo ""
           echo "=========================================="
           echo "DIFF STAT"
           echo "=========================================="
@@ -1011,7 +1094,7 @@ jobs:
       # Commit
       # ============================================================
 
-      - name: Commit AI changes
+      - name: Commit successful AI changes
         if: steps.final_build.outputs.exit_code == '0'
         shell: bash
         run: |
@@ -1025,10 +1108,10 @@ jobs:
           fi
 
           git commit \
-            -m "feat: AI-assisted Minecraft upgrade"
+            -m "feat: upgrade Hydraulic for Minecraft 26.2"
 
       # ============================================================
-      # Push branch
+      # Push same AI branch
       # ============================================================
 
       - name: Push AI branch
@@ -1036,6 +1119,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Pushing branch:"
+          echo "$BRANCH"
 
           git push \
             --set-upstream \
@@ -1046,24 +1132,25 @@ jobs:
       # Upload logs
       # ============================================================
 
-      - name: Upload build logs
+      - name: Upload AI build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-agent-build-logs
+          name: hydraulic-ai-build-logs
           path: |
+            /tmp/initial-build.log
             /tmp/gradle-build.log
             /tmp/final-build.log
           if-no-files-found: ignore
 
       # ============================================================
-      # Fail if final build failed
+      # Fail workflow if final build failed
       # ============================================================
 
       - name: Fail if final build failed
         if: steps.final_build.outputs.exit_code != '0'
         shell: bash
         run: |
-          echo "::error::Final Gradle build failed."
-          echo "AI branch was not committed."
+          echo "::error::Final build failed."
+          echo "AI changes were NOT pushed."
           exit 1
