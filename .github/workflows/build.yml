@@ -15,6 +15,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
       - name: Setup Gradle
         uses: GeyserMC/actions/setup-gradle-composite@master
         with:
@@ -38,6 +41,13 @@ jobs:
 
       - name: Build Hydraulic
         run: ./gradlew build
+
+      - name: Verify bundled Geyser language resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s fabric/build/resources/main/languages/texts/en_US.properties
+          jar tf fabric/build/libs/hydraulic-fabric.jar | grep -Fx 'languages/texts/en_US.properties'
 
       - name: Runtime verification - Minecraft 26.2
         shell: bash
