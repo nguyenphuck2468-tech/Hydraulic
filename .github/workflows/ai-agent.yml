@@ -38,7 +38,7 @@ on:
       max_attempts:
         description: "Maximum AI repair attempts"
         required: false
-        default: "10"
+        default: "15"
 
       branch:
         description: "AI development branch"
@@ -55,28 +55,64 @@ concurrency:
 jobs:
   ai-developer:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     env:
       TARGET_MINECRAFT_VERSION: "26.2"
       TARGET_JAVA_VERSION: "25"
 
-      AI_MODEL: ${{ vars.AI_MODEL || 'openai/gpt-4.1-mini' }}
-      MAX_ATTEMPTS: ${{ inputs.max_attempts || '10' }}
+      # ----------------------------------------------------------------
+      # Model selection
+      # ----------------------------------------------------------------
+      # Primary model: pick a frontier, reasoning-capable coding model.
+      # gpt-4.1-mini is far too weak for a real multi-module Gradle/Loom
+      # compatibility migration. As of Aug 2026, strong candidates on
+      # OpenRouter include anthropic/claude-opus-4.8, openai/gpt-5.6,
+      # x-ai/grok-4.6, deepseek/deepseek-v4-pro and z-ai/glm-5.2 — model
+      # slugs change often, so verify the exact current slug at
+      # https://openrouter.ai/models?order=top-weekly before relying on
+      # this default. Prefer overriding via the repo variable AI_MODEL
+      # instead of editing this file.
+      AI_MODEL: ${{ vars.AI_MODEL || 'anthropic/claude-opus-4.8' }}
+
+      # Escalation model: used once the primary model has failed
+      # ESCALATE_AFTER attempts in a row. Pick a model from a different
+      # lab/architecture so it isn't prone to the same blind spots.
+      # Leave empty to disable escalation.
+      AI_MODEL_FALLBACK: ${{ vars.AI_MODEL_FALLBACK || 'openai/gpt-5.6' }}
+      ESCALATE_AFTER: ${{ vars.ESCALATE_AFTER || '3' }}
+
+      # Reasoning effort passed through to models that support extended
+      # thinking (OpenRouter's unified reasoning.effort field). Models
+      # that don't support it simply ignore it; set to "none" to disable.
+      AI_REASONING_EFFORT: ${{ vars.AI_REASONING_EFFORT || 'high' }}
+
+      MAX_ATTEMPTS: ${{ inputs.max_attempts || '15' }}
       TASK: ${{ inputs.task }}
       AI_BRANCH: ${{ inputs.branch }}
 
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
+      # ----------------------------------------------------------------
       # AI context limits
-      MAX_CONTEXT_CHARS: "70000"
-      MAX_LOG_CHARS: "30000"
-      MAX_DIFF_CHARS: "18000"
-      MAX_RESPONSE_TOKENS: "14000"
+      # ----------------------------------------------------------------
+      # Raised to match the larger context windows of current frontier
+      # models. These are character budgets, not token budgets, so they
+      # still sit comfortably inside real model limits.
+      MAX_CONTEXT_CHARS: "160000"
+      MAX_LOG_CHARS: "45000"
+      MAX_DIFF_CHARS: "30000"
+      MAX_RESPONSE_TOKENS: "32000"
+
+      # Extra budget reserved for the real source of files that were
+      # actually referenced by the latest compiler/build error, so the
+      # model fixes root causes instead of guessing from config files
+      # alone. See extract_error_context() below.
+      MAX_ERROR_CONTEXT_CHARS: "60000"
 
       # Hard safety limits
-      MAX_PATCH_FILES: "40"
-      MAX_PATCH_LINES: "2500"
+      MAX_PATCH_FILES: "60"
+      MAX_PATCH_LINES: "4000"
 
     steps:
 
@@ -242,6 +278,7 @@ jobs:
           import re
           import subprocess
           import textwrap
+          import time
           import urllib.request
           import urllib.error
           from pathlib import Path
@@ -251,6 +288,13 @@ jobs:
 
           API_KEY = os.environ["OPENROUTER_API_KEY"]
           MODEL = os.environ["AI_MODEL"]
+          MODEL_FALLBACK = os.environ.get("AI_MODEL_FALLBACK", "").strip()
+          ESCALATE_AFTER = int(os.environ.get("ESCALATE_AFTER", "3"))
+          REASONING_EFFORT = os.environ.get("AI_REASONING_EFFORT", "high").strip()
+
+          PRIMARY_TEMPERATURE = 0.05
+          FALLBACK_TEMPERATURE = 0.2
+
           TASK = os.environ["TASK"]
 
           TARGET_MC = os.environ["TARGET_MINECRAFT_VERSION"]
@@ -262,6 +306,7 @@ jobs:
           MAX_LOG_CHARS = int(os.environ["MAX_LOG_CHARS"])
           MAX_DIFF_CHARS = int(os.environ["MAX_DIFF_CHARS"])
           MAX_RESPONSE_TOKENS = int(os.environ["MAX_RESPONSE_TOKENS"])
+          MAX_ERROR_CONTEXT_CHARS = int(os.environ["MAX_ERROR_CONTEXT_CHARS"])
 
           MAX_PATCH_FILES = int(os.environ["MAX_PATCH_FILES"])
           MAX_PATCH_LINES = int(os.environ["MAX_PATCH_LINES"])
@@ -411,9 +456,7 @@ jobs:
               return "".join(chunks)
 
 
-          def project_context():
-
-              files = collect_files()
+          def project_context(files):
 
               priority = [
                   "gradle.properties",
@@ -468,6 +511,73 @@ jobs:
                   )
 
                   if total + len(piece) > MAX_CONTEXT_CHARS:
+                      break
+
+                  chunks.append(piece)
+                  total += len(piece)
+
+              return "".join(chunks)
+
+
+          def extract_error_context(log, known_files, budget):
+
+              # Scan a build/compiler log for concrete file references and
+              # pull the real current source of those files into context.
+              # This is what actually lets the model fix a root-cause
+              # compile error instead of guessing from build-file metadata
+              # alone.
+
+              if not log:
+                  return ""
+
+              pattern = re.compile(
+                  r"([\w./-]+\.(?:java|kt|kts|groovy|gradle))(?::(\d+))?"
+              )
+
+              hits = []
+              seen = set()
+
+              for match in pattern.finditer(log):
+
+                  rel = match.group(1).lstrip("./")
+
+                  candidates = [
+                      f for f in known_files
+                      if f == rel or f.endswith("/" + rel)
+                  ]
+
+                  if not candidates:
+                      continue
+
+                  resolved = candidates[0]
+
+                  if resolved in seen:
+                      continue
+
+                  seen.add(resolved)
+                  hits.append(resolved)
+
+              chunks = []
+              total = 0
+
+              for rel in hits:
+
+                  path = ROOT / rel
+
+                  try:
+                      text = path.read_text(
+                          encoding="utf-8",
+                          errors="replace"
+                      )
+                  except Exception:
+                      continue
+
+                  piece = (
+                      f"\n===== ERROR-REFERENCED FILE: {rel} =====\n"
+                      f"{text}\n"
+                  )
+
+                  if total + len(piece) > budget:
                       break
 
                   chunks.append(piece)
@@ -563,100 +673,200 @@ jobs:
               return True, ""
 
 
-          def call_ai(prompt):
+          SYSTEM_PROMPT = textwrap.dedent(
+              f"""
+              You are a senior Minecraft platform engineer
+              operating as an autonomous repository repair agent.
+
+              Target Minecraft version:
+              {TARGET_MC}
+
+              Target Java:
+              {TARGET_JAVA}
+
+              You are NOT a text replacement bot.
+
+              You must reason about the actual Gradle project,
+              source code, mappings, loader APIs, dependencies,
+              runtime configuration and module ownership.
+
+              The repository must genuinely support Minecraft
+              {TARGET_MC}.
+
+              A successful Gradle build is NOT sufficient.
+
+              Runtime verification must actually load:
+              Minecraft {TARGET_MC}
+
+              Never claim success when runtime loads an older
+              Minecraft version.
+
+              Each prompt may include an ATTEMPT HISTORY section listing
+              what previous attempts tried and why they failed, and an
+              ERROR-REFERENCED FILES section with the real current source
+              of every file named in the latest build error. Use both:
+              do not repeat an approach already marked as failed, and fix
+              the actual file and line the error points to instead of
+              guessing.
+
+              Runtime verification may run more than one Gradle task (for
+              example separate Fabric, NeoForge and datagen tasks). All of
+              them must load the target Minecraft version for an attempt
+              to count as verified.
+
+              NEVER use workarounds whose purpose is to make
+              the build appear successful without real
+              compatibility.
+
+              Do not:
+              - suppress compilation errors
+              - disable tests
+              - skip required tasks
+              - remove functionality just to compile
+              - downgrade Minecraft to an older version
+              - fake runtime output
+              - modify logs to fake success
+              - blindly replace version strings
+              - remove dependencies merely to avoid errors
+              - disable Fabric/NeoForge functionality
+              - bypass Geyser compatibility
+              - change unrelated code
+
+              Determine which Gradle module owns each change.
+
+              If a task belongs to a specific module, make the
+              appropriate change in that module/configuration.
+
+              Fabric and NeoForge must remain properly separated.
+
+              Geyser integration must remain functional.
+
+              Prefer real dependency/API migration over metadata
+              changes.
+
+              Return ONLY a unified git diff.
+
+              The response MUST start with:
+
+              diff --git
+
+              Do not return Markdown.
+              Do not use code fences.
+              Do not return explanations.
+              Do not return analysis.
+              Do not return JSON.
+
+              Never modify:
+              .github/workflows/
+              gradle/wrapper/
+              .gitignore
+
+              Never commit.
+              Never push.
+
+              Your patch must be directly usable by:
+
+              git apply
+              """
+          )
+
+
+          def _post_openrouter(payload, retries=3):
+
+              # Retries transient failures (rate limits, upstream 5xx)
+              # with exponential backoff instead of burning an entire
+              # attempt on a blip.
+
+              request_body = json.dumps(payload).encode("utf-8")
+
+              last_error = None
+
+              for i in range(retries):
+
+                  request = urllib.request.Request(
+                      "https://openrouter.ai/api/v1/chat/completions",
+                      data=request_body,
+                      headers={
+                          "Authorization": f"Bearer {API_KEY}",
+                          "Content-Type": "application/json",
+                          "HTTP-Referer":
+                              f"https://github.com/"
+                              f"{os.environ['GITHUB_REPOSITORY']}",
+                          "X-Title":
+                              "Hydraulic Long-Term AI Developer"
+                      },
+                      method="POST"
+                  )
+
+                  try:
+
+                      with urllib.request.urlopen(
+                          request,
+                          timeout=600
+                      ) as response:
+
+                          return json.load(response)
+
+                  except urllib.error.HTTPError as e:
+
+                      body = e.read().decode(errors="replace")
+
+                      last_error = RuntimeError(
+                          f"OpenRouter HTTP {e.code}: {body[:8000]}"
+                      )
+
+                      transient = e.code in (429, 500, 502, 503, 504)
+
+                      if transient and i < retries - 1:
+
+                          sleep_for = 5 * (2 ** i)
+
+                          print(
+                              f"Transient OpenRouter error {e.code}, "
+                              f"retrying in {sleep_for}s..."
+                          )
+
+                          time.sleep(sleep_for)
+
+                          continue
+
+                      raise last_error
+
+                  except urllib.error.URLError as e:
+
+                      last_error = RuntimeError(
+                          f"OpenRouter connection error: {e}"
+                      )
+
+                      if i < retries - 1:
+
+                          sleep_for = 5 * (2 ** i)
+
+                          print(
+                              f"Connection error, retrying in "
+                              f"{sleep_for}s..."
+                          )
+
+                          time.sleep(sleep_for)
+
+                          continue
+
+                      raise last_error
+
+              raise last_error
+
+
+          def call_ai(prompt, model, temperature):
 
               payload = {
 
-                  "model": MODEL,
+                  "model": model,
 
                   "messages": [
 
                       {
                           "role": "system",
-
-                          "content": textwrap.dedent(
-                              f"""
-                              You are a senior Minecraft platform engineer
-                              operating as an autonomous repository repair agent.
-
-                              Target Minecraft version:
-                              {TARGET_MC}
-
-                              Target Java:
-                              {TARGET_JAVA}
-
-                              You are NOT a text replacement bot.
-
-                              You must reason about the actual Gradle project,
-                              source code, mappings, loader APIs, dependencies,
-                              runtime configuration and module ownership.
-
-                              The repository must genuinely support Minecraft
-                              {TARGET_MC}.
-
-                              A successful Gradle build is NOT sufficient.
-
-                              Runtime verification must actually load:
-                              Minecraft {TARGET_MC}
-
-                              Never claim success when runtime loads an older
-                              Minecraft version.
-
-                              NEVER use workarounds whose purpose is to make
-                              the build appear successful without real
-                              compatibility.
-
-                              Do not:
-                              - suppress compilation errors
-                              - disable tests
-                              - skip required tasks
-                              - remove functionality just to compile
-                              - downgrade Minecraft to an older version
-                              - fake runtime output
-                              - modify logs to fake success
-                              - blindly replace version strings
-                              - remove dependencies merely to avoid errors
-                              - disable Fabric/NeoForge functionality
-                              - bypass Geyser compatibility
-                              - change unrelated code
-
-                              Determine which Gradle module owns each change.
-
-                              If a task belongs to a specific module, make the
-                              appropriate change in that module/configuration.
-
-                              Fabric and NeoForge must remain properly separated.
-
-                              Geyser integration must remain functional.
-
-                              Prefer real dependency/API migration over metadata
-                              changes.
-
-                              Return ONLY a unified git diff.
-
-                              The response MUST start with:
-
-                              diff --git
-
-                              Do not return Markdown.
-                              Do not use code fences.
-                              Do not return explanations.
-                              Do not return analysis.
-                              Do not return JSON.
-
-                              Never modify:
-                              .github/workflows/
-                              gradle/wrapper/
-                              .gitignore
-
-                              Never commit.
-                              Never push.
-
-                              Your patch must be directly usable by:
-
-                              git apply
-                              """
-                          )
+                          "content": SYSTEM_PROMPT
                       },
 
                       {
@@ -666,48 +876,34 @@ jobs:
 
                   ],
 
-                  "temperature": 0.05,
+                  "temperature": temperature,
 
                   "max_tokens": MAX_RESPONSE_TOKENS
               }
 
-
-              request = urllib.request.Request(
-                  "https://openrouter.ai/api/v1/chat/completions",
-                  data=json.dumps(payload).encode("utf-8"),
-                  headers={
-                      "Authorization": f"Bearer {API_KEY}",
-                      "Content-Type": "application/json",
-                      "HTTP-Referer":
-                          f"https://github.com/"
-                          f"{os.environ['GITHUB_REPOSITORY']}",
-                      "X-Title":
-                          "Hydraulic Long-Term AI Developer"
-                  },
-                  method="POST"
-              )
-
+              if REASONING_EFFORT and REASONING_EFFORT.lower() != "none":
+                  payload["reasoning"] = {"effort": REASONING_EFFORT}
 
               try:
 
-                  with urllib.request.urlopen(
-                      request,
-                      timeout=300
-                  ) as response:
+                  data = _post_openrouter(payload)
 
-                      data = json.load(response)
+              except RuntimeError as exc:
 
-              except urllib.error.HTTPError as e:
+                  if "reasoning" in payload and "HTTP 400" in str(exc):
 
-                  body = e.read().decode(
-                      errors="replace"
-                  )
+                      print(
+                          "Model rejected the 'reasoning' parameter, "
+                          "retrying without it."
+                      )
 
-                  raise RuntimeError(
-                      f"OpenRouter HTTP {e.code}: "
-                      f"{body[:8000]}"
-                  )
+                      payload.pop("reasoning", None)
 
+                      data = _post_openrouter(payload)
+
+                  else:
+
+                      raise
 
               if "choices" not in data:
                   raise RuntimeError(
@@ -776,72 +972,143 @@ jobs:
               }
 
 
-          def runtime_verify():
+          def discover_verification_tasks():
 
-              runtime_log = ROOT / "/tmp/runtime-26.2.log"
+              # Use the task list captured by the earlier "Discover Gradle
+              # project" step to find every datagen/run task that can
+              # actually prove runtime compatibility, instead of trusting
+              # a single hardcoded task name. This is what lets a single
+              # verification pass genuinely cover Fabric, NeoForge and
+              # Geyser-adjacent modules separately.
 
-              cmd = [
-                  "./gradlew",
-                  ":test:runDatagen",
-                  "--no-daemon",
-                  "--stacktrace"
-              ]
+              tasks_log = Path("/tmp/gradle-tasks.log")
 
-              result = subprocess.run(
-                  cmd,
-                  cwd=ROOT,
-                  text=True,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT
+              if not tasks_log.exists():
+                  return [":test:runDatagen"]
+
+              text = tasks_log.read_text(
+                  encoding="utf-8",
+                  errors="replace"
               )
 
-              runtime_log.write_text(
-                  result.stdout,
+              found = re.findall(
+                  r"^(:[\w:-]*(?:runDatagen|runClient|runServer))\b",
+                  text,
+                  flags=re.MULTILINE
+              )
+
+              ordered = []
+
+              for task in found:
+
+                  if task not in ordered:
+                      ordered.append(task)
+
+              if (
+                  ":test:runDatagen" not in ordered
+                  and (ROOT / "test").exists()
+              ):
+                  ordered.insert(0, ":test:runDatagen")
+
+              return ordered or [":test:runDatagen"]
+
+
+          def runtime_verify():
+
+              tasks = discover_verification_tasks()
+
+              combined_output = []
+              reasons = []
+              all_ok = True
+
+              for task in tasks:
+
+                  cmd = [
+                      "./gradlew",
+                      task,
+                      "--no-daemon",
+                      "--stacktrace"
+                  ]
+
+                  result = subprocess.run(
+                      cmd,
+                      cwd=ROOT,
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT
+                  )
+
+                  output = result.stdout
+
+                  combined_output.append(
+                      f"\n===== TASK: {task} =====\n{output}\n"
+                  )
+
+                  loaded_target = bool(
+                      re.search(
+                          rf"Loading Minecraft {re.escape(TARGET_MC)}"
+                          rf"(?:\b|[.\s])",
+                          output
+                      )
+                  )
+
+                  loaded_old = bool(
+                      re.search(
+                          r"Loading Minecraft 26\.1(?:\.\d+)?",
+                          output
+                      )
+                  )
+
+                  mappings_missing = "Mappings not present!" in output
+
+                  if loaded_old:
+                      all_ok = False
+                      reasons.append(
+                          f"{task}: still loaded Minecraft 26.1.x."
+                      )
+
+                  elif not loaded_target:
+                      all_ok = False
+                      reasons.append(
+                          f"{task}: did not prove Minecraft {TARGET_MC}."
+                      )
+
+                  elif mappings_missing:
+                      all_ok = False
+                      reasons.append(
+                          f"{task}: reports 'Mappings not present!'."
+                      )
+
+                  elif result.returncode != 0:
+                      all_ok = False
+                      reasons.append(
+                          f"{task}: task failed "
+                          f"(exit {result.returncode})."
+                      )
+
+              full_output = "".join(combined_output)
+
+              Path("/tmp/runtime-26.2.log").write_text(
+                  full_output,
                   encoding="utf-8"
               )
 
-              output = result.stdout
-
-              loaded_target = bool(
-                  re.search(
-                      rf"Loading Minecraft {re.escape(TARGET_MC)}(?:\b|[.\s])",
-                      output
+              if not tasks:
+                  return (
+                      False,
+                      "No runtime/datagen verification task was found.",
+                      full_output
                   )
-              )
 
-              loaded_old = bool(
-                  re.search(
-                      r"Loading Minecraft 26\.1(?:\.\d+)?",
-                      output
+              if all_ok:
+                  return (
+                      True,
+                      "Runtime target verified across: "
+                      + ", ".join(tasks),
+                      full_output
                   )
-              )
 
-              mappings_missing = (
-                  "Mappings not present!" in output
-              )
-
-              if loaded_old:
-                  return False, (
-                      "Runtime still loaded Minecraft 26.1.x."
-                  ), output
-
-              if not loaded_target:
-                  return False, (
-                      f"Runtime did not prove Minecraft {TARGET_MC}."
-                  ), output
-
-              if mappings_missing:
-                  return False, (
-                      "Runtime reports 'Mappings not present!'. "
-                      "This is not accepted as a successful target upgrade."
-                  ), output
-
-              if result.returncode != 0:
-                  return False, (
-                      "Runtime/datagen task failed."
-                  ), output
-
-              return True, "Runtime target verified.", output
+              return False, "; ".join(reasons), full_output
 
 
           if Path("/tmp/initial-build.log").exists():
@@ -859,6 +1126,8 @@ jobs:
 
 
           success = False
+          consecutive_failures = 0
+          attempt_history = []
 
 
           for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -872,13 +1141,42 @@ jobs:
               print("=" * 70)
 
 
+              if consecutive_failures >= ESCALATE_AFTER and MODEL_FALLBACK:
+
+                  active_model = MODEL_FALLBACK
+                  active_temperature = FALLBACK_TEMPERATURE
+
+                  print(f"Escalating to fallback model: {active_model}")
+
+              else:
+
+                  active_model = MODEL
+                  active_temperature = PRIMARY_TEMPERATURE
+
+              print(
+                  f"Using model: {active_model} "
+                  f"(temperature={active_temperature})"
+              )
+
+
+              files = collect_files()
+
               static = target_static_check()
 
-              context = project_context()
+              context = project_context(files)
+
+              error_context = extract_error_context(
+                  previous_log, files, MAX_ERROR_CONTEXT_CHARS
+              )
 
               diff = current_diff()
 
               status = git_status()
+
+              history_block = "\n".join(
+                  f"- Attempt {i + 1}: {note}"
+                  for i, note in enumerate(attempt_history)
+              ) or "(no previous attempts yet)"
 
 
               prompt = textwrap.dedent(
@@ -901,6 +1199,17 @@ jobs:
 
 
                   =========================================================
+                  ATTEMPT HISTORY (what has already been tried)
+                  =========================================================
+
+                  {history_block}
+
+                  Do not repeat an approach already listed above as failed
+                  unless you have a genuinely new reason to believe it will
+                  work now.
+
+
+                  =========================================================
                   REQUIRED GRADLE VALIDATION TASKS
                   =========================================================
 
@@ -913,7 +1222,12 @@ jobs:
                   :shared:build
                   :fabric:build
                   :test:build
-                  :test:runDatagen
+
+                  Runtime verification will automatically run every
+                  run/runDatagen-style task discovered in the project
+                  (Fabric, NeoForge, datagen, etc.) — make sure each such
+                  task actually exists and works for {TARGET_MC}. Do not
+                  remove or rename a task just because it is inconvenient.
 
                   Do NOT remove a task merely because it currently passes
                   or because another task already depends on it.
@@ -953,6 +1267,17 @@ jobs:
                   =========================================================
 
                   {previous_log[-MAX_LOG_CHARS:]}
+
+
+                  =========================================================
+                  REAL SOURCE OF FILES REFERENCED BY THE ERRORS ABOVE
+                  =========================================================
+
+                  This is the actual current content of every file that
+                  appeared in a compiler/build error above. Fix the real
+                  root cause in these files rather than guessing.
+
+                  {error_context or "(no specific files were referenced by the log above)"}
 
 
                   =========================================================
@@ -1005,7 +1330,14 @@ jobs:
 
                   15. Keep the patch focused.
 
-                  16. Return ONLY a valid unified git diff.
+                  16. Check the ATTEMPT HISTORY above; do not retry an
+                      approach already marked as failed without a real
+                      reason to expect a different result this time.
+
+                  17. Prioritize fixing the files listed under REAL SOURCE
+                      OF FILES REFERENCED BY THE ERRORS ABOVE when present.
+
+                  18. Return ONLY a valid unified git diff.
 
                   The first line MUST be:
 
@@ -1016,7 +1348,7 @@ jobs:
 
               try:
 
-                  response = call_ai(prompt)
+                  response = call_ai(prompt, active_model, active_temperature)
 
               except Exception as exc:
 
@@ -1026,6 +1358,13 @@ jobs:
                   )
 
                   print(previous_log)
+
+                  attempt_history.append(
+                      f"AI request error ({active_model}): "
+                      f"{str(exc)[:150]}"
+                  )
+
+                  consecutive_failures += 1
 
                   continue
 
@@ -1043,10 +1382,16 @@ jobs:
 
                   print(previous_log)
 
+                  attempt_history.append(
+                      f"{active_model} returned no valid diff."
+                  )
+
+                  consecutive_failures += 1
+
                   continue
 
 
-              patch_file = ROOT / "/tmp/ai.patch"
+              patch_file = Path("/tmp/ai.patch")
 
               patch_file.write_text(
                   patch + "\n",
@@ -1054,34 +1399,61 @@ jobs:
               )
 
 
-              check = run([
-                  "git",
-                  "apply",
-                  "--check",
-                  "--recount",
-                  str(patch_file)
-              ])
+              def try_apply(pf):
+
+                  # Try a normal apply first; fall back to a 3-way merge,
+                  # which can still succeed when context lines have
+                  # drifted slightly but the base blobs are still known.
+
+                  normal_check = run([
+                      "git", "apply", "--check", "--recount", str(pf)
+                  ])
+
+                  if normal_check.returncode == 0:
+
+                      result = run([
+                          "git", "apply", "--whitespace=fix",
+                          "--recount", str(pf)
+                      ])
+
+                      return result, normal_check
+
+                  threeway_check = run([
+                      "git", "apply", "--check", "--3way",
+                      "--recount", str(pf)
+                  ])
+
+                  if threeway_check.returncode == 0:
+
+                      result = run([
+                          "git", "apply", "--3way", "--whitespace=fix",
+                          "--recount", str(pf)
+                      ])
+
+                      return result, threeway_check
+
+                  return None, normal_check
 
 
-              if check.returncode != 0:
+              apply_result, check_result = try_apply(patch_file)
+
+
+              if apply_result is None:
 
                   previous_log = (
-                      "PATCH VALIDATION FAILED:\n\n"
-                      + check.stdout[-MAX_LOG_CHARS:]
+                      "PATCH VALIDATION FAILED (normal and 3-way):\n\n"
+                      + check_result.stdout[-MAX_LOG_CHARS:]
                   )
 
                   print(previous_log)
 
+                  attempt_history.append(
+                      "Patch failed git apply --check (normal + 3-way)."
+                  )
+
+                  consecutive_failures += 1
+
                   continue
-
-
-              apply_result = run([
-                  "git",
-                  "apply",
-                  "--whitespace=fix",
-                  "--recount",
-                  str(patch_file)
-              ])
 
 
               if apply_result.returncode != 0:
@@ -1092,6 +1464,13 @@ jobs:
                   )
 
                   print(previous_log)
+
+                  attempt_history.append(
+                      "Patch passed --check but the apply command "
+                      "still failed."
+                  )
+
+                  consecutive_failures += 1
 
                   continue
 
@@ -1123,6 +1502,13 @@ jobs:
                       + "\n".join(forbidden)
                   )
 
+                  attempt_history.append(
+                      "Patch touched protected files: "
+                      + ", ".join(forbidden)
+                  )
+
+                  consecutive_failures += 1
+
                   continue
 
 
@@ -1145,6 +1531,12 @@ jobs:
                       + size_error
                       + "\nGenerate a smaller focused patch."
                   )
+
+                  attempt_history.append(
+                      "Patch exceeded size limits: " + size_error
+                  )
+
+                  consecutive_failures += 1
 
                   continue
 
@@ -1198,6 +1590,13 @@ jobs:
                       + task_result.stdout[-MAX_LOG_CHARS:]
                   )
 
+                  attempt_history.append(
+                      "Patch applied but :shared/:fabric/:test build "
+                      "failed."
+                  )
+
+                  consecutive_failures += 1
+
                   continue
 
 
@@ -1226,6 +1625,13 @@ jobs:
                       + runtime_output[-MAX_LOG_CHARS:]
                   )
 
+                  attempt_history.append(
+                      "Build passed but runtime verification failed: "
+                      + runtime_reason
+                  )
+
+                  consecutive_failures += 1
+
                   continue
 
 
@@ -1248,6 +1654,13 @@ jobs:
                       "references in relevant configuration files.\n\n"
                       + static["evidence"]
                   )
+
+                  attempt_history.append(
+                      "Build and runtime passed but stale 26.1 "
+                      "references still remain in configuration files."
+                  )
+
+                  consecutive_failures += 1
 
                   continue
 
@@ -1272,6 +1685,15 @@ jobs:
               success = True
 
               break
+
+
+          Path("/tmp/attempt-history.log").write_text(
+              "\n".join(
+                  f"Attempt {i + 1}: {note}"
+                  for i, note in enumerate(attempt_history)
+              ) or "No attempts were recorded.",
+              encoding="utf-8"
+          )
 
 
           if not success:
@@ -1320,17 +1742,42 @@ jobs:
           echo "FINAL RUNTIME VERIFICATION"
           echo "=========================================="
 
-          ./gradlew \
-            :test:runDatagen \
-            --no-daemon \
-            --stacktrace \
-            2>&1 | tee /tmp/final-runtime.log
+          # Discover every Fabric/NeoForge/datagen-style task instead of
+          # trusting a single hardcoded task, so Fabric, NeoForge and
+          # Geyser-adjacent modules are all actually proven, not just one.
+          mapfile -t VERIFY_TASKS < <(
+            grep -oE '^:[[:alnum:]:_-]*(runDatagen|runClient|runServer)\b' \
+              /tmp/gradle-tasks.log 2>/dev/null | sort -u
+          )
 
-          status="${PIPESTATUS[0]}"
+          if [[ ${#VERIFY_TASKS[@]} -eq 0 ]]; then
+            VERIFY_TASKS=(":test:runDatagen")
+          fi
 
-          if [[ "$status" -ne 0 ]]; then
-            echo "::error::Runtime/datagen task failed."
-            exit "$status"
+          echo "Verification tasks: ${VERIFY_TASKS[*]}"
+
+          : > /tmp/final-runtime.log
+
+          overall_status=0
+
+          for t in "${VERIFY_TASKS[@]}"; do
+            echo ""
+            echo "----- Running $t -----"
+
+            ./gradlew "$t" --no-daemon --stacktrace \
+              2>&1 | tee -a /tmp/final-runtime.log
+
+            task_status="${PIPESTATUS[0]}"
+
+            if [[ "$task_status" -ne 0 ]]; then
+              echo "::error::$t failed."
+              overall_status=1
+            fi
+          done
+
+          if [[ "$overall_status" -ne 0 ]]; then
+            echo "::error::One or more runtime/datagen tasks failed."
+            exit 1
           fi
 
           echo ""
@@ -1523,6 +1970,7 @@ jobs:
             /tmp/final-runtime.log
             /tmp/runtime-26.2.log
             /tmp/gradle-tasks.log
+            /tmp/attempt-history.log
 
       # ============================================================
       # Final failure gate
