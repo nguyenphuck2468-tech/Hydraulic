@@ -45,11 +45,6 @@ dependencies {
     implementation(libs.fabric.loader)
     api(libs.fabric.api)
 
-    // Creative's Adventure component types expose Examination interfaces.
-    // shared is consumed non-transitively, so this must be declared directly
-    // on the Fabric runtime classpath as well.
-    implementation("net.kyori:examination-api:1.3.0")
-
     common(project(":shared")) { isTransitive = false }
     compileOnly(libs.geyser.api)
 
@@ -61,6 +56,12 @@ dependencies {
 
     runtimeOnly(libs.pack.converter)
     includeTransitive(libs.pack.converter)
+
+    // Examination is used by Creative's resource-pack reader at server runtime.
+    // Keep it on the development runtime for :fabric:runServer and bundle it
+    // into the production Fabric jar so standalone servers get the same class.
+    localRuntime("net.kyori:examination-api:1.3.0")
+    include("net.kyori:examination-api:1.3.0")
 
     localRuntime(libs.geyser.fabric) {
         exclude(group = "io.netty")
