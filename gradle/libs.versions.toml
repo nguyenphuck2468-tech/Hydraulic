@@ -6,8 +6,8 @@ auto-service = "1.1.1"
 pack-converter = "3.4.3-SNAPSHOT"
 indra = "4.0.0"
 shadow = "9.4.1"
-architectury-plugin = "3.5-SNAPSHOT"
-architectury-loom = "1.14-SNAPSHOT"
+architectury-plugin = "3.5.169"
+architectury-loom = "1.17.491"
 asm = "5.2"
 
 # Fabric
