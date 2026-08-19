@@ -10,6 +10,8 @@ fabricApi {
         client = true
         createSourceSet = true
         this.modId = testModId
+        outputDirectory = file("src/main/generated")
+        addToResources = true
     }
 }
 
@@ -23,12 +25,19 @@ configurations {
     developmentFabric.extendsFrom(configurations["common"])
 }
 
+sourceSets {
+    named("main") {
+        resources.srcDir(file("src/main/generated"))
+    }
+}
+
 tasks {
     sourcesJar {
         dependsOn(named("runDatagen"))
     }
 
     named<Jar>("mergeShadowAndJarJar") {
+        dependsOn(named("runDatagen"))
         from(
             zipTree(shadowJar.map { it.outputs.files.singleFile }).matching {
                 exclude("fabric.mod.json")
