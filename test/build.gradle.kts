@@ -58,8 +58,26 @@ tasks {
     }
 }
 
-tasks.named("build") {
+// Generated resources only exist after the datagen process has finished.
+// Validate them in Gradle instead of from the mod's normal initialization;
+// this prevents the datagen JVM from failing before it can create the files.
+tasks.register("verifyGeneratedResources") {
     dependsOn(tasks.named("runDatagen"))
+
+    doLast {
+        val outputDir = file("${layout.buildDirectory.get()}/generated/datagen")
+        val required = file("$outputDir/assets/$testModId/blockstates/golden_barrel.json")
+
+        check(required.isFile && required.length() > 0) {
+            "Missing generated resource: ${required.absolutePath}"
+        }
+
+        logger.lifecycle("Verified generated resource: ${required.relativeTo(outputDir)}")
+    }
+}
+
+tasks.named("build") {
+    dependsOn(tasks.named("verifyGeneratedResources"))
 }
 
 dependencies {
