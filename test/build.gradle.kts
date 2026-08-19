@@ -21,9 +21,25 @@ configurations {
     developmentFabric.extendsFrom(configurations["common"])
 }
 
+sourceSets {
+    named("main") {
+        resources.srcDir("src/main/generated")
+    }
+}
+
 tasks {
+    val runDatagen = named("runDatagen")
+
+    named<ProcessResources>("processResources") {
+        from("src/main/generated")
+        // Ordering constraint only: runDatagen already participates in the
+        // build lifecycle below. Do not use dependsOn here, because Fabric's
+        // datagen task compiles the test sources and that would create a cycle.
+        mustRunAfter(runDatagen)
+    }
+
     sourcesJar {
-        dependsOn(named("runDatagen")) // Make sure the sources jar gets our generated files
+        dependsOn(runDatagen) // Make sure the sources jar gets our generated files
     }
 
     named<Jar>("mergeShadowAndJarJar") {
@@ -50,7 +66,7 @@ tasks {
     }
 }
 
-// Always ensure datagen is up to date before building
+// Ensure datagen completes before the build's resource/jar tasks consume its output.
 tasks.named("build") { dependsOn(tasks.named("runDatagen")) }
 
 dependencies {
