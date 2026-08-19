@@ -22,16 +22,8 @@ configurations {
 }
 
 tasks {
-    val runDatagen = named("runDatagen")
-
-    // Generated models, blockstates, tags, and equipment assets must exist
-    // before processResources packages the test mod jar used by runtime CI.
-    named("processResources") {
-        dependsOn(runDatagen)
-    }
-
     sourcesJar {
-        dependsOn(runDatagen)
+        dependsOn(named("runDatagen")) // Make sure the sources jar gets our generated files
     }
 
     named<Jar>("mergeShadowAndJarJar") {
@@ -58,7 +50,7 @@ tasks {
     }
 }
 
-// Always ensure datagen is part of the build graph.
+// Always ensure datagen is up to date before building
 tasks.named("build") { dependsOn(tasks.named("runDatagen")) }
 
 dependencies {
