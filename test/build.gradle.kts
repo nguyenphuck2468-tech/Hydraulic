@@ -1,4 +1,4 @@
-val modId = project.property("mod_id") as String
+val testModId = "hydraulic_test_mod"
 
 architectury {
     platformSetupLoomIde()
@@ -9,7 +9,7 @@ fabricApi {
     configureDataGeneration() {
         client = true
         createSourceSet = true
-        this.modId = modId
+        this.modId = testModId
     }
 }
 
@@ -25,22 +25,22 @@ configurations {
 
 tasks {
     sourcesJar {
-        dependsOn(named("runDatagen")) // Make sure the sources jar gets our generated files
+        dependsOn(named("runDatagen"))
     }
 
     named<Jar>("mergeShadowAndJarJar") {
-        from (
-            zipTree( shadowJar.map { it.outputs.files.singleFile } ).matching {
+        from(
+            zipTree(shadowJar.map { it.outputs.files.singleFile }).matching {
                 exclude("fabric.mod.json")
                 exclude("LICENSE")
             },
-            zipTree( jar.map { it.outputs.files.singleFile } ).matching {
+            zipTree(jar.map { it.outputs.files.singleFile }).matching {
                 include("META-INF/jars/**")
                 include("fabric.mod.json")
                 include("LICENSE")
             }
         )
-        archiveBaseName.set("${modId}-test-mod-fabric")
+        archiveBaseName.set("$testModId-test-mod-fabric")
     }
 
     shadowJar {
@@ -52,7 +52,9 @@ tasks {
     }
 }
 
-tasks.named("build") { dependsOn(tasks.named("runDatagen")) }
+tasks.named("build") {
+    dependsOn(tasks.named("runDatagen"))
+}
 
 dependencies {
     implementation(libs.fabric.loader)
