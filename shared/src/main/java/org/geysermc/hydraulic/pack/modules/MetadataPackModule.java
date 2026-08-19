@@ -45,6 +45,10 @@ public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConvert
 
         Header header = manifest.header();
 
+        // Keep the Bedrock manifest explicitly tied to the originating mod.
+        // This makes the generated pack unambiguous even when the display name differs from the mod id.
+        header.name(mod.id() + " - " + mod.name().trim());
+
         // Generate the pack uuid from the mod file
         String packUuid = PackUtil.getModUUID(mod.roots()).toString();
         header.uuid(packUuid);
@@ -52,7 +56,7 @@ public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConvert
         // Generate module uuid based on type
         for (Modules module : manifest.modules()) {
             module.uuid(UUID.nameUUIDFromBytes((module.type + packUuid).getBytes()).toString());
-            module.description(mod.name().trim() + " " + StringUtils.capitalize(module.type));
+            module.description(mod.id() + " - " + mod.name().trim() + " " + StringUtils.capitalize(module.type));
         }
 
         return manifest;
