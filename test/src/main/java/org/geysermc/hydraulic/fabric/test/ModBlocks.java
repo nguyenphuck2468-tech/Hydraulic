@@ -24,6 +24,8 @@ public class ModBlocks {
             true
     );
 
+    public static final ResourceKey<Block> GOLDEN_BARREL_KEY = keyOfBlock("golden_barrel");
+
     private static Block register(String name, Function<BlockBehaviour.Properties, Block> blockFactory, BlockBehaviour.Properties properties, boolean shouldRegisterItem) {
         ResourceKey<Block> blockKey = keyOfBlock(name);
         Block block = blockFactory.apply(properties.setId(blockKey));
