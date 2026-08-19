@@ -32,6 +32,9 @@ tasks {
 
     named<Jar>("mergeShadowAndJarJar") {
         dependsOn(named("runDatagen"))
+        from(file("${layout.buildDirectory.get()}/generated/datagen")) {
+            exclude(".cache/**")
+        }
         from(
             zipTree(shadowJar.map { it.outputs.files.singleFile }).matching {
                 exclude("fabric.mod.json")
