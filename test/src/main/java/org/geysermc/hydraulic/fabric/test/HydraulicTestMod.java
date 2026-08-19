@@ -3,7 +3,6 @@ package org.geysermc.hydraulic.fabric.test;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -28,13 +27,9 @@ public class HydraulicTestMod implements ModInitializer {
                 .orElseThrow(() -> new IllegalStateException("Hydraulic test mod container is missing"));
 
         for (String resource : REQUIRED_RESOURCES) {
-            try {
-                Path path = modContainer.findPath(resource).orElse(null);
-                if (path == null || !java.nio.file.Files.isRegularFile(path)) {
-                    throw new IllegalStateException("Missing generated resource: " + resource);
-                }
-            } catch (IOException e) {
-                throw new IllegalStateException("Unable to inspect generated resource: " + resource, e);
+            Path path = modContainer.findPath(resource).orElse(null);
+            if (path == null || !java.nio.file.Files.isRegularFile(path)) {
+                throw new IllegalStateException("Missing generated resource: " + resource);
             }
         }
     }
