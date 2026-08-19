@@ -24,57 +24,38 @@ import java.util.stream.Stream;
 public class PackUtil {
     protected static final Logger LOGGER = LogUtils.getLogger();
 
-    /**
-     * Bedrock has problematic clients/platforms that fail to load resource-pack files with very
-     * long paths. Keep generated Hydraulic paths below the conservative 80-character threshold.
-     */
-    public static String limitPathLength(@NotNull String path, int maxLength) {
-        if (path.length() <= maxLength) {
-            return path;
+    public static String getTextureName(@NotNull String modelName) {
+        // Some mods reference their own texture through the minecraft namespace.
+        // Use the Bedrock vanilla mapping when it exists, but preserve the original
+        // location when the mapping is absent instead of failing conversion.
+        if (!modelName.startsWith(Key.MINECRAFT_NAMESPACE)) {
+            return modelName.replace("block/", "").replace("item/", "");
         }
 
-        final String hash = Integer.toHexString(path.hashCode())
-                + Integer.toHexString((path + "|hydraulic").hashCode());
-        final int slash = path.lastIndexOf('/');
-        final String filename = slash >= 0 ? path.substring(slash + 1) : path;
-        final int dot = filename.lastIndexOf('.');
-        final String extension = dot > 0 ? filename.substring(dot) : "";
-        final String stem = dot > 0 ? filename.substring(0, dot) : filename;
-        final String readableStem = stem.length() > 10 ? stem.substring(0, 10) : stem;
-
-        String result = "textures/" + hash + "/" + readableStem + extension;
-        if (result.length() <= maxLength) {
-            return result;
+        String modelValue = modelName.substring(Key.MINECRAFT_NAMESPACE.length());
+        JsonMappings mappings = JsonMappings.getMapping("textures");
+        if (mappings == null) {
+            return stripTextureDirectory(modelValue);
         }
 
-        int allowedStem = Math.max(1, maxLength - ("textures/" + hash + "/" + extension).length());
-        return "textures/" + hash + "/" + readableStem.substring(0, Math.min(readableStem.length(), allowedStem)) + extension;
+        var mapped = mappings.map(modelValue);
+        if (mapped == null || mapped.isEmpty()) {
+            LOGGER.debug("No Bedrock texture mapping for {}", modelName);
+            return stripTextureDirectory(modelValue);
+        }
+
+        String output = mapped.getFirst();
+        if (output == null || output.isBlank()) {
+            return stripTextureDirectory(modelValue);
+        }
+
+        String value = output.contains("/") ? output.substring(output.indexOf("/") + 1) : output;
+        return modelValue.equals(output) ? value : Constants.MOD_ID + ":" + value;
     }
 
-    public static String getTextureName(@NotNull String modelName) {
-        // Sometimes things end up in the minecraft namespace when they shouldn't.
-        // EG: betternether:wall_mushroom_red referencing both its own and vanilla textures.
-        if (modelName.startsWith(Key.MINECRAFT_NAMESPACE)) {
-            String modelValue = modelName.split(":")[1];
-
-            // Need to use the Bedrock value for vanilla textures
-            JsonMappings mappings = JsonMappings.getMapping("textures");
-            if (mappings != null) {
-                String output = mappings.map(modelValue).getFirst();
-
-                String value = output.substring(output.indexOf("/") + 1);
-
-                if (modelValue.equals(output)) {
-                    return value;
-                }
-
-                return Constants.MOD_ID + ":" + value;
-            }
-
-            return modelValue.substring(modelValue.indexOf("/") + 1);
-        }
-
-        return modelName.replace("block/", "").replace("item/", "");
+    private static String stripTextureDirectory(@NotNull String value) {
+        int separator = value.indexOf("/");
+        return separator >= 0 ? value.substring(separator + 1) : value;
     }
 
     public static UUID getModUUID(Collection<Path> modRoots) {
