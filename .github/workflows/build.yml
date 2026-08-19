@@ -51,10 +51,6 @@ jobs:
           test -s fabric/build/resources/main/languages/texts/en_US.properties
           jar tf "$jar_file" | grep -Fx 'languages/texts/en_US.properties'
 
-          # Gradle's include() places libraries in the Fabric jar's nested
-          # META-INF/jars area. Verify the actual Examination API class is
-          # present there; checking only the development runtime can miss a
-          # production-jar packaging regression.
           if jar tf "$jar_file" | grep -Fx 'net/kyori/examination/Examinable.class' >/dev/null; then
             echo 'Examination API is present directly in the Hydraulic jar.'
           else
@@ -101,9 +97,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # :fabric:runServer uses fabric/run as its working directory.
-          # Prepare the EULA and server.properties there; putting eula.txt in
-          # the repository root does not satisfy DedicatedServerSettings.
           mkdir -p fabric/run
           printf 'eula=true\n' > fabric/run/eula.txt
           cat > fabric/run/server.properties <<'EOF'
@@ -178,6 +171,41 @@ jobs:
 
           echo "Hydraulic Minecraft 26.2 server exited with code ${server_exit} after verification."
 
+      - name: Verify generated Bedrock gameplay pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pack=$(find fabric/run -type f -path '*/storage/hydraulic_test_mod/hydraulic_test_mod.mcpack' -print -quit)
+          if [ -z "$pack" ]; then
+            echo 'Gameplay pack verification failed: hydraulic_test_mod.mcpack was not generated.'
+            find fabric/run -type f -name '*.mcpack' -print || true
+            exit 1
+          fi
+
+          test -s "$pack"
+          echo "Generated gameplay pack: $pack ($(stat -c '%s' "$pack") bytes)"
+
+          zipinfo -1 "$pack" | grep -Fx 'manifest.json'
+
+          entries=$(zipinfo -1 "$pack" | grep -E '\.(json|png)$' | wc -l)
+          if [ "$entries" -lt 5 ]; then
+            echo "Gameplay pack verification failed: expected at least 5 converted resource files, got $entries."
+            exit 1
+          fi
+
+          if ! zipinfo -1 "$pack" | grep -Eq '^textures/.*\.png$'; then
+            echo 'Gameplay pack verification failed: no converted Bedrock texture was found.'
+            exit 1
+          fi
+
+          if ! unzip -p "$pack" manifest.json | grep -q 'hydraulic_test_mod'; then
+            echo 'Gameplay pack verification failed: manifest does not identify hydraulic_test_mod.'
+            exit 1
+          fi
+
+          echo 'Verified generated Bedrock pack contains manifest, converted resources, and textures.'
+
       - name: Archive Artifacts
         uses: GeyserMC/actions/upload-multi-artifact@master
         if: success()
@@ -214,7 +242,7 @@ jobs:
           privateKey: ${{ secrets.DOWNLOADS_PRIVATE_KEY }}
           host: ${{ secrets.DOWNLOADS_SERVER_IP }}
           files: |
-            fabric/build/libs/hydraulic-fabric.jar
+            fabric:fabric/build/libs/hydraulic-fabric.jar
           changelog: ${{ steps.metadata.outputs.body }}
 
       - name: Notify Discord
