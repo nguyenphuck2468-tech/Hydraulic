@@ -10,7 +10,7 @@ fabricApi {
         client = true
         createSourceSet = true
         this.modId = testModId
-        outputDirectory = file("src/main/generated")
+        outputDirectory = file("${layout.buildDirectory.get()}/generated/datagen")
         addToResources = true
     }
 }
@@ -23,12 +23,6 @@ configurations {
     compileClasspath.get().extendsFrom(configurations["common"])
     runtimeClasspath.get().extendsFrom(configurations["common"])
     developmentFabric.extendsFrom(configurations["common"])
-}
-
-sourceSets {
-    named("main") {
-        resources.srcDir(file("src/main/generated"))
-    }
 }
 
 tasks {
