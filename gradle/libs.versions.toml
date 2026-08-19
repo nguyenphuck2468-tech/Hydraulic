@@ -12,7 +12,7 @@ asm = "5.2"
 
 # Fabric
 fabric-loader = "0.19.3"
-fabric-api = "0.156.0+26.2"
+fabric-api = "0.157.0+26.2"
 
 # NeoForge
 neoforge-version = "26.2.0.25-beta"
