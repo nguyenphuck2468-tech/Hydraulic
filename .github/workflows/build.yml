@@ -78,6 +78,24 @@ jobs:
             fi
           fi
 
+      - name: Prepare Hydraulic gameplay fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p fabric/run/mods
+          test_mod=$(find test/build/libs -maxdepth 1 -type f \
+            -name '*test-mod-fabric*.jar' \
+            ! -name '*-sources.jar' \
+            ! -name '*-javadoc.jar' \
+            ! -name '*-dev.jar' \
+            ! -name '*-dev-shadow.jar' \
+            | head -n 1)
+
+          test -n "${test_mod}"
+          cp "${test_mod}" fabric/run/mods/
+          echo "Installed gameplay fixture: ${test_mod}"
+
       - name: Runtime verification - Minecraft 26.2
         shell: bash
         run: |
@@ -120,6 +138,7 @@ jobs:
 
           test -s fabric/run/eula.txt
           test -s fabric/run/server.properties
+          test -n "$(find fabric/run/mods -maxdepth 1 -type f -name '*.jar' -print -quit)"
 
           set +e
           timeout --signal=TERM 90s ./gradlew :fabric:runServer --no-daemon 2>&1 | tee runtime-26.2.log
@@ -141,7 +160,23 @@ jobs:
             exit 1
           fi
 
-          echo "Runtime server exited with code ${server_exit} after verification."
+          if ! grep -Eq 'hydraulic_test_mod' runtime-26.2.log; then
+            echo 'Runtime verification failed: Hydraulic Test Mod did not load.'
+            exit 1
+          fi
+
+          if ! grep -Eq 'Converting pack for mod hydraulic_test_mod' runtime-26.2.log; then
+            echo 'Runtime verification failed: Hydraulic did not convert the gameplay fixture resource pack.'
+            exit 1
+          fi
+
+          converted_packs=$(grep -c 'Pack conversion completed successfully!' runtime-26.2.log || true)
+          if [ "${converted_packs}" -lt 2 ]; then
+            echo "Runtime verification failed: expected at least 2 successful pack conversions, got ${converted_packs}."
+            exit 1
+          fi
+
+          echo "Hydraulic Minecraft 26.2 server exited with code ${server_exit} after verification."
 
       - name: Archive Artifacts
         uses: GeyserMC/actions/upload-multi-artifact@master
