@@ -109,4 +109,9 @@ public class HydraulicKey implements org.geysermc.geyser.api.util.Identifier, Ke
 
         return false;
     }
+
+    @Override
+    public int hashCode() {
+        return 31 * namespace.hashCode() + path.hashCode();
+    }
 }
