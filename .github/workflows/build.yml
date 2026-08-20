@@ -40,13 +40,28 @@ jobs:
           path: PackConverter
           persist-credentials: false
 
+      - name: Verify PackConverter checkout
+        working-directory: PackConverter
+        run: |
+          test -f settings.gradle.kts
+          test -f converter/build.gradle.kts
+          git rev-parse --verify HEAD
+          git status --short
+
       - name: Publish PackConverter modules to local Maven
         working-directory: PackConverter
         run: |
-          gradle :pack-schema-api:publishToMavenLocal :converter:publishToMavenLocal --no-daemon --stacktrace
+          gradle :pack-schema-api:publishToMavenLocal :converter:publishToMavenLocal --no-daemon --stacktrace --warning-mode all
+
+      - name: Verify PackConverter publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$HOME/.m2/repository/org/geysermc/pack/converter/3.4.3-SNAPSHOT"
+          test -f "$HOME/.m2/repository/org/geysermc/pack/converter/3.4.3-SNAPSHOT/converter-3.4.3-SNAPSHOT.pom"
 
       - name: Build Hydraulic
-        run: ./gradlew build --no-daemon --stacktrace
+        run: ./gradlew build --no-daemon --stacktrace --warning-mode all
 
       - name: Archive Artifacts
         uses: GeyserMC/actions/upload-multi-artifact@master
