@@ -40,10 +40,10 @@ jobs:
           path: PackConverter
           persist-credentials: false
 
-      - name: Publish PackConverter to local Maven
+      - name: Publish PackConverter modules to local Maven
         working-directory: PackConverter
         run: |
-          gradle publishToMavenLocal --no-daemon --stacktrace
+          gradle :pack-schema-api:publishToMavenLocal :converter:publishToMavenLocal --no-daemon --stacktrace
 
       - name: Build Hydraulic
         run: ./gradlew build --no-daemon --stacktrace
