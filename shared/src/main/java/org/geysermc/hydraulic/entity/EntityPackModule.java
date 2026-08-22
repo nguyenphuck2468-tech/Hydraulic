@@ -345,7 +345,14 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     private JsonObject collectAnimations(String namespace, String path, BedrockResourcePack pack) {
         JsonObject animations = new JsonObject();
 
-        byte[] converted = pack.extraFiles().get("animations/" + namespace + "." + path + ".animation.json");
+        // The map is lazily created on the first addExtraFile, so it is null for
+        // a fresh pack that has not received extra files yet.
+        Map<String, byte[]> extraFiles = pack.extraFiles();
+        if (extraFiles == null) {
+            return animations;
+        }
+
+        byte[] converted = extraFiles.get("animations/" + namespace + "." + path + ".animation.json");
         if (converted == null) {
             return animations;
         }
