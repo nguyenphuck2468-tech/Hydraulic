@@ -3,6 +3,7 @@ package org.geysermc.hydraulic.pack;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gson.Gson;
 import com.mojang.logging.LogUtils;
+import net.minecraft.SharedConstants;
 import org.apache.commons.lang3.tuple.Pair;
 import org.geysermc.event.PostOrder;
 import org.geysermc.event.subscribe.Subscribe;
@@ -17,6 +18,7 @@ import org.geysermc.hydraulic.storage.ModStorage;
 import org.geysermc.hydraulic.util.FormatUtil;
 import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.bedrock.resource.Manifest;
+import org.geysermc.pack.converter.util.VanillaPackProvider;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -60,6 +62,33 @@ public class PackListener {
         hydraulic.registerServerStop(server -> {
             THREAD_POOL.shutdown(); // Prevents the server from locking up on stop
         });
+
+        warmVanillaPack();
+    }
+
+    /**
+     * Starts fetching the vanilla pack cache as early as possible. The first
+     * download of a new Minecraft version can take minutes on slow networks,
+     * and the pack conversion joins on the server thread - if the download
+     * only starts there, the server watchdog kills the server before the
+     * cache is ready. Warming from mod init (before the server thread and
+     * its watchdog exist) means the conversion usually finds a finished
+     * cache; VanillaPackProvider serialises concurrent callers.
+     */
+    private void warmVanillaPack() {
+        String version;
+        try {
+            SharedConstants.tryDetectVersion();
+            version = SharedConstants.getCurrentVersion().id();
+        } catch (Throwable t) {
+            LOGGER.debug("Could not determine Minecraft version early, deferring vanilla pack fetch", t);
+            return;
+        }
+
+        LOGGER.info("Pre-fetching vanilla pack for Minecraft {}...", version);
+        CompletableFuture.runAsync(
+                () -> VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)),
+                THREAD_POOL);
     }
 
     @Subscribe(postOrder = PostOrder.LATE)

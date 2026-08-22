@@ -141,6 +141,11 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             Identifier itemLocation = BuiltInRegistries.ITEM.getKey(item);
 
             Model baseModel = assets.model(Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath()));
+            if (baseModel == null && item instanceof BlockItem) {
+                // Modern block items frequently ship no legacy item/ model - their
+                // inventory look comes straight from the block model.
+                baseModel = assets.model(Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath()));
+            }
             if (baseModel == null) {
                 context.logger().warn("Item {} has no item model, skipping", itemLocation);
                 continue;

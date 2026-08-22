@@ -17,14 +17,21 @@ import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.pack.context.PackEventContext;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
+import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
+import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * Pack module that makes non-vanilla entities visible to Bedrock players.
@@ -42,14 +49,15 @@ import java.util.Map;
  *     geometry/animations produced by the PackConverter GeckoLib converters.</li>
  * </ul>
  *
- * <p><b>Asset binding is convention-based in this first version:</b> an entity
- * {@code modid:example_mob} is bound to geometry {@code geometry.modid.example_mob}
- * (the identifier the GeckoLib model converter produces for
- * {@code assets/modid/geo/example_mob.geo.json}), texture
- * {@code textures/entity/modid/example_mob} and, when present, every animation in
- * {@code animations/modid.example_mob.animation.json}. Mods that name their
- * assets differently will render with missing geometry until per-mod overrides
- * exist.</p>
+ * <p><b>Asset binding:</b> an entity {@code modid:example_mob} first tries the
+ * naming convention (geometry {@code geometry.modid.example_mob}, texture
+ * {@code textures/entity/modid/example_mob}, animations from
+ * {@code animations/modid.example_mob.animation.json}). When no asset is named
+ * exactly after the entity, converted geometries are matched by their inner
+ * identifier ({@code geometry.alexsmobs.grizzly_bear}) and textures are
+ * searched by file name, which covers the naming style most GeckoLib mods
+ * use. Part models ({@code <path>_head.geo.json}) bind as geometry
+ * variants.</p>
  */
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
@@ -156,7 +164,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         description.add("materials", materials);
 
         JsonObject textures = new JsonObject();
-        textures.addProperty("default", "textures/entity/" + namespace + "/" + path);
+        textures.addProperty("default", findTexture(namespace, path, pack));
         description.add("textures", textures);
 
         description.add("geometry", collectGeometries(namespace, path, pack));
@@ -291,27 +299,114 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     /**
      * Binds the entity's own converted geometry as {@code default} plus every
      * sibling part model ({@code <path>_head.geo.json} and friends) as a named
-     * geometry variant, so multi-file mods expose all their parts for render
-     * controllers to switch between.
+     * geometry variant. When no file is named exactly after the entity, the
+     * converted geometries' own identifiers are searched for the entity name -
+     * most GeckoLib mods name models after the entity inside the file rather
+     * than in the file name.
      */
     private JsonObject collectGeometries(String namespace, String path, BedrockResourcePack pack) {
         JsonObject geometries = new JsonObject();
-        geometries.addProperty("default", "geometry." + namespace + "." + path);
+        String defaultGeometry = "geometry." + namespace + "." + path;
 
-        if (pack.entityModels() == null) {
-            return geometries;
+        if (pack.entityModels() != null) {
+            String locationPrefix = "models/entity/" + namespace + ".";
+            String fuzzyMatch = null;
+
+            for (Map.Entry<String, ModelEntity> entry : pack.entityModels().entrySet()) {
+                String location = entry.getKey();
+                if (!location.startsWith(locationPrefix) || !location.endsWith(".json")) continue;
+
+                String base = location.substring(locationPrefix.length(), location.length() - ".json".length());
+                if (base.equals(path)) {
+                    defaultGeometry = "geometry." + namespace + "." + base;
+                    fuzzyMatch = null;
+                    break;
+                }
+                if (base.startsWith(path + "_")) {
+                    geometries.addProperty(base.substring(path.length() + 1), "geometry." + namespace + "." + base);
+                    continue;
+                }
+
+                if (fuzzyMatch == null) {
+                    String byIdentifier = geometryIdentifierFor(entry.getValue(), path);
+                    if (byIdentifier != null) {
+                        fuzzyMatch = byIdentifier;
+                    }
+                }
+            }
+
+            if (fuzzyMatch != null) {
+                defaultGeometry = fuzzyMatch;
+            }
         }
 
-        String locationPrefix = "models/entity/" + namespace + ".";
-        for (String location : pack.entityModels().keySet()) {
-            if (!location.startsWith(locationPrefix) || !location.endsWith(".json")) continue;
-
-            String base = location.substring(locationPrefix.length(), location.length() - ".json".length());
-            if (base.equals(path) || !base.startsWith(path + "_")) continue;
-
-            geometries.addProperty(base.substring(path.length() + 1), "geometry." + namespace + "." + base);
+        // Order matters for readability only: default first in the JSON.
+        JsonObject ordered = new JsonObject();
+        ordered.addProperty("default", defaultGeometry);
+        for (Map.Entry<String, JsonElement> variant : geometries.entrySet()) {
+            ordered.add(variant.getKey(), variant.getValue());
         }
-        return geometries;
+        return ordered;
+    }
+
+    /**
+     * Looks for a geometry whose identifier ends in the entity name, e.g.
+     * {@code geometry.alexsmobs.grizzly_bear} for entity {@code grizzly_bear}.
+     */
+    private static String geometryIdentifierFor(ModelEntity model, String path) {
+        if (model.geometry() == null) return null;
+        String suffix = "." + path;
+        for (Geometry geometry : model.geometry()) {
+            String identifier = geometry.description() != null ? geometry.description().identifier() : null;
+            if (identifier != null && (identifier.equals("geometry." + path) || identifier.endsWith(suffix))) {
+                return identifier;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the entity texture. Exact convention first, then a scan of the
+     * converted entity textures for a file named after (or containing) the
+     * entity name, since mods lay out texture folders in many ways.
+     */
+    private String findTexture(String namespace, String path, BedrockResourcePack pack) {
+        String convention = "textures/entity/" + namespace + "/" + path;
+        try {
+            Path entityTextures = pack.directory().resolve("textures/entity");
+            if (!Files.isDirectory(entityTextures)) {
+                return convention;
+            }
+
+            String exact = path + ".png";
+            String exactTga = path + ".tga";
+            String contains = null;
+            try (Stream<Path> candidates = Files.walk(entityTextures)) {
+                for (Path candidate : (Iterable<Path>) candidates::iterator) {
+                    if (!Files.isRegularFile(candidate)) continue;
+
+                    String name = candidate.getFileName().toString();
+                    String relative = pack.directory().relativize(candidate).toString().replace(File.separatorChar, '/');
+                    if (relative.endsWith(".png")) {
+                        relative = relative.substring(0, relative.length() - ".png".length());
+                    } else if (relative.endsWith(".tga")) {
+                        relative = relative.substring(0, relative.length() - ".tga".length());
+                    } else {
+                        continue;
+                    }
+
+                    if (name.equals(exact) || name.equals(exactTga)) {
+                        return relative;
+                    }
+                    if (contains == null && (name.contains(path) || relative.contains("/" + path))) {
+                        contains = relative;
+                    }
+                }
+            }
+            return contains != null ? contains : convention;
+        } catch (IOException e) {
+            return convention;
+        }
     }
 
     private JsonObject renderController(String namespace, String path) {
