@@ -19,7 +19,7 @@ concurrency:
 
 env:
   PACK_CONVERTER_REPO: nguyenphuck2468-tech/PackConverter
-  PACK_CONVERTER_REF: feature/geckolib-entity-support
+  PACK_CONVERTER_REF: master
 
 jobs:
   build:
