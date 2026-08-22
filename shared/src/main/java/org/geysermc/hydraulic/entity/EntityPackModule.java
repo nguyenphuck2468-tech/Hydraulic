@@ -7,8 +7,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
 import org.geysermc.geyser.api.entity.custom.CustomEntityDefinition;
+import org.geysermc.geyser.api.entity.data.GeyserEntityDataTypes;
 import org.geysermc.geyser.api.event.java.ServerSpawnEntityEvent;
 import org.geysermc.geyser.api.event.lifecycle.GeyserDefineEntitiesEvent;
 import org.geysermc.hydraulic.pack.PackModule;
@@ -57,6 +59,12 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      */
     private final Map<String, CustomEntityDefinition> definitions = new HashMap<>();
 
+    /**
+     * Bedrock entity identifier to the Java entity type it mirrors, kept so the
+     * spawn handler can apply the Java-side hitbox to the Bedrock entity.
+     */
+    private final Map<String, EntityType<?>> javaTypes = new HashMap<>();
+
     public EntityPackModule() {
         this.listenOn(GeyserDefineEntitiesEvent.class, this::onDefineEntities);
         this.listenOn(ServerSpawnEntityEvent.class, this::onSpawnEntity);
@@ -76,6 +84,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 CustomEntityDefinition definition = CustomEntityDefinition.of(bedrockIdentifier);
                 event.register(definition);
                 this.definitions.put(bedrockIdentifier, definition);
+                this.javaTypes.put(bedrockIdentifier, type);
 
                 context.logger().info("Registered custom entity {}", bedrockIdentifier);
             } catch (Exception e) {
@@ -87,9 +96,21 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     private void onSpawnEntity(@NotNull PackEventContext<ServerSpawnEntityEvent, EntityPackModule> context) {
         ServerSpawnEntityEvent event = context.event();
 
-        CustomEntityDefinition definition = this.definitions.get(event.entityType().identifier().toString());
+        String javaId = event.entityType().identifier().toString();
+        CustomEntityDefinition definition = this.definitions.get(javaId);
         if (definition != null) {
             event.definition(definition);
+
+            // Carry the Java-side hitbox across so Bedrock collision and name-tag
+            // placement match the mod's intent instead of a generic default.
+            EntityType<?> javaType = this.javaTypes.get(javaId);
+            if (javaType != null) {
+                EntityDimensions dimensions = javaType.dimensions();
+                event.preSpawnConsumer(entity -> {
+                    entity.override(GeyserEntityDataTypes.WIDTH, dimensions.width());
+                    entity.override(GeyserEntityDataTypes.HEIGHT, dimensions.height());
+                });
+            }
         }
     }
 
@@ -107,7 +128,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             AnimationRefs refs = resolveAnimationRefs(animations);
 
             pack.addExtraFile(
-                    clientEntity(namespace, path, refs),
+                    clientEntity(namespace, path, refs, pack),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
@@ -126,7 +147,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * animations actually play; otherwise any converted animations are attached
      * as plain references.
      */
-    private JsonObject clientEntity(String namespace, String path, AnimationRefs refs) {
+    private JsonObject clientEntity(String namespace, String path, AnimationRefs refs, BedrockResourcePack pack) {
         JsonObject description = new JsonObject();
         description.addProperty("identifier", namespace + ":" + path);
 
@@ -138,9 +159,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         textures.addProperty("default", "textures/entity/" + namespace + "/" + path);
         description.add("textures", textures);
 
-        JsonObject geometry = new JsonObject();
-        geometry.addProperty("default", "geometry." + namespace + "." + path);
-        description.add("geometry", geometry);
+        description.add("geometry", collectGeometries(namespace, path, pack));
 
         if (refs != null) {
             JsonObject animations = new JsonObject();
@@ -267,6 +286,32 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         JsonObject wrapper = new JsonObject();
         wrapper.add("description", description);
         return wrapper;
+    }
+
+    /**
+     * Binds the entity's own converted geometry as {@code default} plus every
+     * sibling part model ({@code <path>_head.geo.json} and friends) as a named
+     * geometry variant, so multi-file mods expose all their parts for render
+     * controllers to switch between.
+     */
+    private JsonObject collectGeometries(String namespace, String path, BedrockResourcePack pack) {
+        JsonObject geometries = new JsonObject();
+        geometries.addProperty("default", "geometry." + namespace + "." + path);
+
+        if (pack.entityModels() == null) {
+            return geometries;
+        }
+
+        String locationPrefix = "models/entity/" + namespace + ".";
+        for (String location : pack.entityModels().keySet()) {
+            if (!location.startsWith(locationPrefix) || !location.endsWith(".json")) continue;
+
+            String base = location.substring(locationPrefix.length(), location.length() - ".json".length());
+            if (base.equals(path) || !base.startsWith(path + "_")) continue;
+
+            geometries.addProperty(base.substring(path.length() + 1), "geometry." + namespace + "." + base);
+        }
+        return geometries;
     }
 
     private JsonObject renderController(String namespace, String path) {
