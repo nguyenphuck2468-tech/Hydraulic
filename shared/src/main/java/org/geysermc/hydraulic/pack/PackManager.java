@@ -92,13 +92,15 @@ public class PackManager {
         final Collection<ModInfo> mods = this.hydraulic.mods();
         final Map<String, List<ResourcePack>> modPacks = Maps.newHashMapWithExpectedSize(mods.size());
         for (final ModInfo mod : mods) {
-            modPacks.put(
-                mod.id(),
-                mod.roots()
-                    .stream()
-                    .map(path -> MinecraftResourcePackReader.minecraft().read(NioDirectoryFileTreeReader.read(path)))
-                    .toList()
-            );
+            List<ResourcePack> resourcePacks = new ArrayList<>();
+            for (Path root : mod.roots()) {
+                try {
+                    resourcePacks.add(MinecraftResourcePackReader.minecraft().read(NioDirectoryFileTreeReader.read(root)));
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("Failed to read resource root {} for mod {}; continuing with its remaining roots", root, mod.id(), exception);
+                }
+            }
+            modPacks.put(mod.id(), resourcePacks);
         }
 
         try {
@@ -182,22 +184,26 @@ public class PackManager {
         });
 
         try {
+            // Do not retain a stale archive if this conversion fails. A stale pack
+            // can describe old items/models and is worse than skipping one mod.
+            Files.deleteIfExists(packPath);
+
             for (final Path root : mod.roots()) {
                 converter.input(root, false).convert();
             }
-        } catch (IOException ex) {
-            LOGGER.error("Failed to convert mod {} to pack", mod.id(), ex);
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.error("Failed to convert mod {} to pack", mod.id(), exception);
             return false;
         }
 
-        // Now export the pack
         try {
             converter.pack();
-        } catch (IOException ex) {
-            LOGGER.error("Failed to export pack for mod {}", mod.id(), ex);
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.error("Failed to export pack for mod {}", mod.id(), exception);
+            return false;
         }
 
-        return Files.exists(packPath);
+        return Files.isRegularFile(packPath);
     }
 
     private void callEvents(@NotNull Event event) {

@@ -11,30 +11,57 @@ on:
       - 'LICENSE'
       - 'README.md'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: hydraulic-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PACK_CONVERTER_REPO: nguyenphuck2468-tech/PackConverter
+  PACK_CONVERTER_REF: feature/geckolib-entity-support
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout Hydraulic
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Checkout PackConverter fork
-        uses: actions/checkout@v4
-        with:
-          repository: nguyenphuck2468-tech/PackConverter
-          ref: 60e63c33a86651243303960bc3f616e6e93c3583
-          path: ../PackConverter
-          persist-credentials: false
-
-      - name: Setup Gradle
+      - name: Setup Gradle and Java
         uses: GeyserMC/actions/setup-gradle-composite@master
         with:
           setup-java_java-version: 25
 
-      - name: Build Hydraulic with PackConverter fork
-        run: ./gradlew clean build --no-daemon -PpackConverterPath=../PackConverter
+      - name: Checkout PackConverter integration source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PACK_CONVERTER_REPO }}
+          ref: ${{ env.PACK_CONVERTER_REF }}
+          path: PackConverter
+          persist-credentials: false
+
+      - name: Verify PackConverter checkout
+        working-directory: PackConverter
+        run: |
+          test -f settings.gradle.kts
+          test -f converter/build.gradle.kts
+          git rev-parse --verify HEAD
+          git status --short
+
+      - name: Publish PackConverter modules to local Maven
+        working-directory: PackConverter
+        run: |
+          gradle :pack-schema-api:publishToMavenLocal :converter:publishToMavenLocal --no-daemon --stacktrace --warning-mode all
+
+      - name: Verify PackConverter publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$HOME/.m2/repository/org/geysermc/pack/converter/3.4.3-SNAPSHOT"
+          test -f "$HOME/.m2/repository/org/geysermc/pack/converter/3.4.3-SNAPSHOT/converter-3.4.3-SNAPSHOT.pom"
+
+      - name: Build Hydraulic
+        run: ./gradlew build --no-daemon --stacktrace --warning-mode all
 
       - name: Archive Artifacts
         uses: GeyserMC/actions/upload-multi-artifact@master

@@ -11,6 +11,10 @@ dependencies {
         exclude(group = "io.netty.incubator")
     }
 
+    // Examinable is exposed by Kyori Creative/Geyser types used during compilation,
+    // but it is not reliably surfaced transitively on the shared compile classpath.
+    compileOnly("net.kyori:examination-api:1.3.0")
+
     api(libs.pack.converter)
 
     implementation(libs.auto.service)

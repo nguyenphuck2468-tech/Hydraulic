@@ -10,23 +10,25 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
-// TODO Probably just do an empty pack check in PackConverter?
 /**
- * Packs the pack into a zip file unless its empty.
+ * Packs the pack into a zip file unless it is empty.
  * <p>
- * Passes over to {@link PackageHandler#ZIP} after its finished its checks.
+ * Delegates content conversion to PackConverter without rewriting generated files:
+ * models, animations and texture references must retain the paths emitted by the
+ * converter so gameplay mods can reference their assets reliably.
  */
 public class PackPackager implements PackageHandler {
     @Override
     public void pack(@NotNull PackConverter converter, @NotNull Path path, @NotNull Path outputPath, @NotNull LogListener logger) throws IOException {
         boolean notEmptyPack = true;
         try (Stream<Path> walker = Files.walk(path)) {
-            // Check if there is a file other than manifest.json and pack_icon.png
-            notEmptyPack = walker.filter(Files::isRegularFile).anyMatch(filePath -> !(filePath.getFileName().toString().equals("manifest.json") || filePath.getFileName().toString().equals("pack_icon.png")));
+            notEmptyPack = walker.filter(Files::isRegularFile)
+                    .anyMatch(filePath -> !("manifest.json".equals(filePath.getFileName().toString())
+                            || "pack_icon.png".equals(filePath.getFileName().toString())));
         } catch (IOException ignored) {
+            // Let the ZIP handler report the actionable error for an unreadable pack.
         }
 
-        // Ignore empty packs
         if (!notEmptyPack) {
             return;
         }

@@ -14,7 +14,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -25,46 +28,78 @@ public class PackUtil {
     protected static final Logger LOGGER = LogUtils.getLogger();
 
     public static String getTextureName(@NotNull String modelName) {
-        // TODO Sometimes things end up in the minecraft namespace when they shouldn't.
-        //      We should look at the current mods resources to see if we find a match there first
-        //      EG: betternether:wall_mushroom_red refrencing both mushroom_red_new (its own) and mushroom_block_inside (mc)
-        if (modelName.startsWith(Key.MINECRAFT_NAMESPACE)) {
-            String modelValue = modelName.split(":")[1];
-
-            // Need to use the Bedrock value for vanilla textures
-            JsonMappings mappings = JsonMappings.getMapping("textures");
-            if (mappings != null) {
-                String output = mappings.map(modelValue).getFirst();
-
-                String value = output.substring(output.indexOf("/") + 1);
-
-                if (modelValue.equals(output)) {
-                    return value;
-                }
-
-                return Constants.MOD_ID + ":" + value;
-            }
-
-            return modelValue.substring(modelValue.indexOf("/") + 1);
+        // Some mods reference their own texture through the minecraft namespace.
+        // Use the Bedrock vanilla mapping when it exists, but preserve the original
+        // location when the mapping is absent instead of failing conversion.
+        if (!modelName.startsWith(Key.MINECRAFT_NAMESPACE)) {
+            return modelName.replace("block/", "").replace("item/", "");
         }
 
-        return modelName.replace("block/", "").replace("item/", "");
+        String modelValue = modelName.substring(Key.MINECRAFT_NAMESPACE.length());
+        JsonMappings mappings = JsonMappings.getMapping("textures");
+        if (mappings == null) {
+            return stripTextureDirectory(modelValue);
+        }
+
+        var mapped = mappings.map(modelValue);
+        if (mapped == null || mapped.isEmpty()) {
+            LOGGER.debug("No Bedrock texture mapping for {}", modelName);
+            return stripTextureDirectory(modelValue);
+        }
+
+        String output = mapped.getFirst();
+        if (output == null || output.isBlank()) {
+            return stripTextureDirectory(modelValue);
+        }
+
+        String value = output.contains("/") ? output.substring(output.indexOf("/") + 1) : output;
+        return modelValue.equals(output) ? value : Constants.MOD_ID + ":" + value;
     }
 
+    private static String stripTextureDirectory(@NotNull String value) {
+        int separator = value.indexOf("/");
+        return separator >= 0 ? value.substring(separator + 1) : value;
+    }
+
+    /**
+     * Generates a UUID from resource contents and paths relative to each root.
+     * Absolute paths are deliberately excluded so moving a server or its mods
+     * directory does not force needless pack regeneration.
+     */
     public static UUID getModUUID(Collection<Path> modRoots) {
-        final HashingOutputStream hos = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
-        try (Stream<Path> stream = modRoots.parallelStream()) {
-            stream.flatMap(IOUtil.uncheckFunction(Files::walk)).sorted().forEachOrdered(p -> {
-                try {
-                    hos.write(p.toString().getBytes(StandardCharsets.UTF_8));
-                    if (Files.isRegularFile(p)) {
-                        Files.copy(p, hos);
-                    }
-                } catch (IOException e) {
-                    LOGGER.warn("Failed to hash {}", p, e);
-                }
-            });
+        final List<byte[]> rootHashes = new ArrayList<>();
+
+        for (Path root : modRoots) {
+            final HashingOutputStream rootOutput = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.sorted(Comparator.comparing(path -> root.relativize(path).toString()))
+                        .forEachOrdered(path -> {
+                            try {
+                                rootOutput.write(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
+                                if (Files.isRegularFile(path)) {
+                                    Files.copy(path, rootOutput);
+                                }
+                            } catch (IOException exception) {
+                                LOGGER.warn("Failed to hash {}", path, exception);
+                            }
+                        });
+            } catch (IOException exception) {
+                LOGGER.warn("Failed to walk resource root {}", root, exception);
+            }
+            rootHashes.add(rootOutput.hash().asBytes());
         }
-        return UUID.nameUUIDFromBytes(hos.hash().asBytes());
+
+        final HashingOutputStream output = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
+        rootHashes.stream()
+                .sorted((left, right) -> java.util.Arrays.compareUnsigned(left, right))
+                .forEach(hash -> {
+                    try {
+                        output.write(hash);
+                    } catch (IOException exception) {
+                        throw new IllegalStateException("Failed to hash mod resources", exception);
+                    }
+                });
+        return UUID.nameUUIDFromBytes(output.hash().asBytes());
     }
 }
+

@@ -134,20 +134,27 @@ public class PackListener {
      * @return {@code true} if the pack needs to be converted.
      */
     private boolean checkNeedsConversion(ModInfo mod, Path packPath) {
-        // Read the uuid from the pack manifest
-        String packUUID;
-        try (
-            ZipFile zip = new ZipFile(packPath.toFile());
-            InputStream inputStream = zip.getInputStream(zip.getEntry("manifest.json"));
-            InputStreamReader inputStreamReader = new InputStreamReader(inputStream)
-        ) {
-            packUUID = GSON.fromJson(inputStreamReader, Manifest.class).header().uuid();
-        } catch (IOException e) {
+        try (ZipFile zip = new ZipFile(packPath.toFile())) {
+            var manifestEntry = zip.getEntry("manifest.json");
+            if (manifestEntry == null) {
+                return true;
+            }
+
+            try (InputStream inputStream = zip.getInputStream(manifestEntry);
+                 InputStreamReader reader = new InputStreamReader(inputStream)) {
+                Manifest manifest = GSON.fromJson(reader, Manifest.class);
+                if (manifest == null || manifest.header() == null || manifest.header().uuid() == null) {
+                    return true;
+                }
+
+                String modUUID = PackUtil.getModUUID(mod.roots()).toString();
+                return !modUUID.equals(manifest.header().uuid());
+            }
+        } catch (IOException | RuntimeException exception) {
+            // A partial or invalid cached archive must be regenerated rather than
+            // preventing Geyser from loading every other converted pack.
             return true;
         }
-
-        String modUUID = PackUtil.getModUUID(mod.roots()).toString();
-
-        return !modUUID.equals(packUUID);
     }
 }
+

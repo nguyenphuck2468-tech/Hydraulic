@@ -22,7 +22,8 @@ allprojects {
     }
 
     repositories {
-        // mavenLocal()
+        // Local PackConverter builds are used by the 26.2 integration CI.
+        mavenLocal()
         mavenCentral()
 
         // Geyser, Floodgate, Cumulus etc.
