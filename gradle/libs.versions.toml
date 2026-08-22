@@ -1,7 +1,7 @@
 [versions]
 mixin = "0.8.7"
 mixinextras = "0.5.4"
-geyser = "2.11.0-SNAPSHOT"
+geyser = "2.11.2-SNAPSHOT"
 auto-service = "1.1.1"
 pack-converter = "3.4.3-SNAPSHOT"
 indra = "4.0.0"
