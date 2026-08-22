@@ -18,7 +18,10 @@ import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -100,21 +103,30 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             String namespace = key.getNamespace();
             String path = key.getPath();
 
+            JsonObject animations = collectAnimations(namespace, path, pack);
+            AnimationRefs refs = resolveAnimationRefs(animations);
+
             pack.addExtraFile(
-                    clientEntity(namespace, path, pack),
+                    clientEntity(namespace, path, refs),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
                     "render_controllers/" + namespace + "." + path + ".render_controllers.json");
+            if (refs != null) {
+                pack.addExtraFile(
+                        animationController(namespace, path, refs),
+                        "animation_controllers/" + namespace + "." + path + ".animation_controllers.json");
+            }
         }
     }
 
     /**
-     * Builds the Bedrock client entity definition. Animations, when a converted
-     * GeckoLib animation file matches the entity name, are attached by their own
-     * names so simple walk/idle setups play without extra wiring.
+     * Builds the Bedrock client entity definition. When a walk/idle animation
+     * could be resolved, the matching animation controller is referenced so the
+     * animations actually play; otherwise any converted animations are attached
+     * as plain references.
      */
-    private JsonObject clientEntity(String namespace, String path, BedrockResourcePack pack) {
+    private JsonObject clientEntity(String namespace, String path, AnimationRefs refs) {
         JsonObject description = new JsonObject();
         description.addProperty("identifier", namespace + ":" + path);
 
@@ -130,9 +142,19 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         geometry.addProperty("default", "geometry." + namespace + "." + path);
         description.add("geometry", geometry);
 
-        JsonObject animations = collectAnimations(namespace, path, pack);
-        if (animations.size() > 0) {
+        if (refs != null) {
+            JsonObject animations = new JsonObject();
+            if (refs.idle() != null) {
+                animations.addProperty("idle", refs.idle());
+            }
+            if (refs.walk() != null) {
+                animations.addProperty("walk", refs.walk());
+            }
             description.add("animations", animations);
+
+            JsonArray animationControllers = new JsonArray();
+            animationControllers.add(controllerName(namespace, path));
+            description.add("animation_controllers", animationControllers);
         }
 
         JsonArray renderControllers = new JsonArray();
@@ -143,6 +165,102 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         clientEntity.addProperty("format_version", "1.10.0");
         clientEntity.add("minecraft:client_entity", clientEntityDescription(description));
         return clientEntity;
+    }
+
+    /**
+     * Builds a two-state (idle/walking) animation controller switching on ground
+     * speed, the standard vanilla quadruped pattern. When only one animation is
+     * available it plays unconditionally from a single default state.
+     */
+    private JsonObject animationController(String namespace, String path, AnimationRefs refs) {
+        JsonObject states = new JsonObject();
+
+        if (refs.idle() != null && refs.walk() != null) {
+            JsonObject idle = new JsonObject();
+            JsonArray idleAnimations = new JsonArray();
+            idleAnimations.add("idle");
+            idle.add("animations", idleAnimations);
+            idle.add("transitions", transition("walking", "query.ground_speed > 0.1"));
+            idle.addProperty("blend_transition", 0.2);
+            states.add("idle", idle);
+
+            JsonObject walking = new JsonObject();
+            JsonArray walkAnimations = new JsonArray();
+            walkAnimations.add("walk");
+            walking.add("animations", walkAnimations);
+            walking.add("transitions", transition("idle", "query.ground_speed <= 0.1"));
+            walking.addProperty("blend_transition", 0.2);
+            states.add("walking", walking);
+        } else {
+            String only = refs.idle() != null ? refs.idle() : refs.walk();
+
+            JsonObject single = new JsonObject();
+            JsonArray singleAnimations = new JsonArray();
+            singleAnimations.add(only);
+            single.add("animations", singleAnimations);
+            states.add("default", single);
+        }
+
+        JsonObject controller = new JsonObject();
+        controller.addProperty("initial_state", refs.idle() != null && refs.walk() != null ? "idle" : "default");
+        controller.add("states", states);
+
+        JsonObject controllers = new JsonObject();
+        controllers.add(controllerName(namespace, path), controller);
+
+        JsonObject root = new JsonObject();
+        root.addProperty("format_version", "1.10.0");
+        root.add("animation_controllers", controllers);
+        return root;
+    }
+
+    private static JsonArray transition(String target, String condition) {
+        JsonObject mapping = new JsonObject();
+        mapping.addProperty(target, condition);
+
+        JsonArray transitions = new JsonArray();
+        transitions.add(mapping);
+        return transitions;
+    }
+
+    private static String controllerName(String namespace, String path) {
+        return "controller.animation." + namespace + "." + path + ".move";
+    }
+
+    /**
+     * Resolves which of the entity's converted animations drive idle and walk.
+     * Names are matched by their conventional suffixes; a lone animation of
+     * unrecognized name is treated as a constant idle so simple mobs still move.
+     *
+     * @return the resolved pair, or {@code null} when nothing can be bound
+     */
+    private static AnimationRefs resolveAnimationRefs(JsonObject animations) {
+        if (animations.size() == 0) {
+            return null;
+        }
+
+        String idle = null;
+        String walk = null;
+        List<String> names = new ArrayList<>(animations.keySet());
+        for (String name : names) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (idle == null && (lower.endsWith(".idle") || lower.endsWith(".base") || lower.endsWith(".ambient"))) {
+                idle = name;
+            } else if (walk == null && (lower.endsWith(".walk") || lower.endsWith(".walking") || lower.endsWith(".move") || lower.endsWith(".fly") || lower.endsWith(".flying") || lower.endsWith(".swim"))) {
+                walk = name;
+            }
+        }
+
+        if (idle == null && walk == null) {
+            if (names.size() == 1) {
+                return new AnimationRefs(names.get(0), null);
+            }
+            return null;
+        }
+        return new AnimationRefs(idle, walk);
+    }
+
+    private record AnimationRefs(String idle, String walk) {
     }
 
     private JsonObject clientEntityDescription(JsonObject description) {
