@@ -5,6 +5,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.mojang.logging.LogUtils;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -113,6 +114,7 @@ public class PackManager {
 
         VanillaPackProvider.create(
                 this.getVanillaPath(),
+                SharedConstants.getCurrentVersion().id(),
                 new PackLogListener(LOGGER)
         );
 
