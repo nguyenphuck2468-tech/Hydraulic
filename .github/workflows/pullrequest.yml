@@ -19,7 +19,7 @@ concurrency:
 
 env:
   PACK_CONVERTER_REPO: nguyenphuck2468-tech/PackConverter
-  PACK_CONVERTER_REF: rebuild/autonomous-ci-hardening-2026-08-20
+  PACK_CONVERTER_REF: feature/geckolib-entity-support
 
 jobs:
   build:
