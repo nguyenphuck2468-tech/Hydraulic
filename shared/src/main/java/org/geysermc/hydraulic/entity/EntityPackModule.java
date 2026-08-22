@@ -105,7 +105,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             // placement match the mod's intent instead of a generic default.
             EntityType<?> javaType = this.javaTypes.get(javaId);
             if (javaType != null) {
-                EntityDimensions dimensions = javaType.dimensions();
+                EntityDimensions dimensions = javaType.getDimensions();
                 event.preSpawnConsumer(entity -> {
                     entity.override(GeyserEntityDataTypes.WIDTH, dimensions.width());
                     entity.override(GeyserEntityDataTypes.HEIGHT, dimensions.height());

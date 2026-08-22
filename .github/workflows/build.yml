@@ -69,7 +69,6 @@ jobs:
         with:
           artifacts: |
             fabric/build/libs/hydraulic-fabric.jar
-            neoforge/build/libs/hydraulic-neoforge.jar
 
       - name: Get Version
         if: ${{ success() && github.repository == 'GeyserMC/Hydraulic' && github.ref_name == 'master' }}
