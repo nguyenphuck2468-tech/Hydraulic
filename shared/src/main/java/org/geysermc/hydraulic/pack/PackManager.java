@@ -9,6 +9,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.entity.EntityType;
 import org.geysermc.event.Event;
 import org.geysermc.geyser.api.GeyserApi;
 import org.geysermc.hydraulic.Constants;
@@ -74,6 +75,7 @@ public class PackManager {
     private final ListMultimap<String, ModInfo> namespacesToMods = MultimapBuilder.hashKeys().arrayListValues(1).build();
     private final ListMultimap<String, Identifier> modsToBlocks = MultimapBuilder.hashKeys().arrayListValues().build();
     private final ListMultimap<String, Identifier> modsToItems = MultimapBuilder.hashKeys().arrayListValues().build();
+    private final ListMultimap<String, EntityType<?>> modsToEntities = MultimapBuilder.hashKeys().arrayListValues().build();
 
     private List<ConverterPipeline<?, ?>> packConverters;
     private ModelStitcher.Provider modelProvider;
@@ -284,6 +286,22 @@ public class PackManager {
                 }
             }
         }
+
+        // Step 4: Map non-vanilla entity types to their mods by namespace.
+        // Unlike blocks/items there is no asset file to verify - an entity type is
+        // attributed to the mod owning its namespace, assets are matched later by
+        // the EntityPackModule using naming conventions.
+        final Multimap<String, EntityType<?>> modsToEntities = this.modsToEntities;
+        modsToEntities.clear();
+        for (final EntityType<?> entityType : BuiltInRegistries.ENTITY_TYPE) {
+            final Identifier entityKey = BuiltInRegistries.ENTITY_TYPE.getKey(entityType);
+            if (entityKey == null || entityKey.getNamespace().equals("minecraft")) continue;
+
+            for (final ModInfo mod : namespacesToMods.get(entityKey.getNamespace())) {
+                modsToEntities.put(mod.id(), entityType);
+                break;
+            }
+        }
     }
 
     /**
@@ -329,6 +347,16 @@ public class PackManager {
 
     public ListMultimap<String, Identifier> getModsToItems() {
         return modsToItems;
+    }
+
+    /**
+     * Gets the mod id to entity type multimap, containing every non-vanilla
+     * entity type attributed to the mod owning its namespace.
+     *
+     * @return the mod id to entity type multimap
+     */
+    public ListMultimap<String, EntityType<?>> getModsToEntities() {
+        return modsToEntities;
     }
 
     public Path getVanillaPath() {

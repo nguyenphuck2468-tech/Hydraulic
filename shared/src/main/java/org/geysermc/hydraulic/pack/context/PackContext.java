@@ -5,6 +5,7 @@ import net.minecraft.core.DefaultedRegistry;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.EntityType;
 import org.geysermc.hydraulic.HydraulicImpl;
 import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
@@ -99,6 +100,17 @@ public class PackContext<T extends PackModule<T>> {
         return Lists.transform(locations, (k) -> {
             return registry.get(k).get().value();
         });
+    }
+
+    /**
+     * Gets the non-vanilla entity types that are relevant for the
+     * {@link ModInfo mod} this pack is part of.
+     *
+     * @return the entity types owned by this mod
+     */
+    @NotNull
+    public List<EntityType<?>> entityTypes() {
+        return List.copyOf(hydraulic.getPackManager().getModsToEntities().get(mod.id()));
     }
 }
 
