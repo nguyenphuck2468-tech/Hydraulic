@@ -1,6 +1,7 @@
 package org.geysermc.hydraulic;
 
 import net.minecraft.server.MinecraftServer;
+import org.geysermc.geyser.api.event.EventRegistrar;
 import org.geysermc.hydraulic.entity.EntityEventRegistrar;
 import org.geysermc.hydraulic.pack.PackManager;
 import org.geysermc.hydraulic.platform.HydraulicBootstrap;
