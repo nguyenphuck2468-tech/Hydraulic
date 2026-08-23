@@ -85,6 +85,13 @@ public class PackListener {
             return;
         }
 
+        // The conversion-time path resolves its version from this property and,
+        // when unset, must fetch Mojang's manifest before it can even compare
+        // the cache - a network call made while the server thread joins the
+        // conversion. Publishing the detected version lets that path hit the
+        // warmed cache without touching the network.
+        System.setProperty("packconverter.vanillaVersion", version);
+
         LOGGER.info("Pre-fetching vanilla pack for Minecraft {}...", version);
         CompletableFuture.runAsync(
                 () -> VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)),
