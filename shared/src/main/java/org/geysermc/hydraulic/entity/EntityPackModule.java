@@ -9,12 +9,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
-import org.geysermc.geyser.api.entity.custom.CustomEntityDefinition;
-import org.geysermc.geyser.api.entity.data.GeyserEntityDataTypes;
-import org.geysermc.geyser.api.event.java.ServerSpawnEntityEvent;
-import org.geysermc.geyser.api.event.lifecycle.GeyserDefineEntitiesEvent;
 import org.geysermc.hydraulic.pack.PackModule;
-import org.geysermc.hydraulic.pack.context.PackEventContext;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
@@ -34,20 +29,14 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * Pack module that makes non-vanilla entities visible to Bedrock players.
+ * Pack module that writes the Bedrock client-side files for modded entities:
+ * client entity definitions, render controllers and animation controllers,
+ * bound to the geometry/animations produced by the PackConverter GeckoLib
+ * converters.
  *
- * <p>Three parts are needed for a modded entity to render on Bedrock, and this
- * module wires up all of them:</p>
- *
- * <ul>
- *     <li>{@link GeyserDefineEntitiesEvent} registers a Bedrock
- *     {@link CustomEntityDefinition} for every entity type owned by the mod.</li>
- *     <li>{@link ServerSpawnEntityEvent} swaps the default Bedrock definition
- *     for the custom one whenever the Java server spawns a matching entity.</li>
- *     <li>The post processor emits the Bedrock client entity definition and
- *     render controller into the converted resource pack, referencing the
- *     geometry/animations produced by the PackConverter GeckoLib converters.</li>
- * </ul>
+ * <p>Registration with Geyser ({@code GeyserDefineEntitiesEvent}) and spawn
+ * swapping ({@code ServerSpawnEntityEvent}) live in {@link EntityEventRegistrar},
+ * which subscribes early enough to catch Geyser's definition event.</p>
  *
  * <p><b>Asset binding:</b> an entity {@code modid:example_mob} first tries the
  * naming convention (geometry {@code geometry.modid.example_mob}, texture
@@ -61,65 +50,8 @@ import java.util.stream.Stream;
  */
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
-    /**
-     * Bedrock entity identifier to the definition registered for it.
-     * Shared across mods because identifiers are namespaced and unique.
-     */
-    private final Map<String, CustomEntityDefinition> definitions = new HashMap<>();
-
-    /**
-     * Bedrock entity identifier to the Java entity type it mirrors, kept so the
-     * spawn handler can apply the Java-side hitbox to the Bedrock entity.
-     */
-    private final Map<String, EntityType<?>> javaTypes = new HashMap<>();
-
     public EntityPackModule() {
-        this.listenOn(GeyserDefineEntitiesEvent.class, this::onDefineEntities);
-        this.listenOn(ServerSpawnEntityEvent.class, this::onSpawnEntity);
-
         this.postProcess(this::postProcess);
-    }
-
-    private void onDefineEntities(@NotNull PackEventContext<GeyserDefineEntitiesEvent, EntityPackModule> context) {
-        GeyserDefineEntitiesEvent event = context.event();
-
-        for (EntityType<?> type : context.entityTypes()) {
-            Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
-            if (key == null) continue;
-
-            String bedrockIdentifier = key.getNamespace() + ":" + key.getPath();
-            try {
-                CustomEntityDefinition definition = CustomEntityDefinition.of(bedrockIdentifier);
-                event.register(definition);
-                this.definitions.put(bedrockIdentifier, definition);
-                this.javaTypes.put(bedrockIdentifier, type);
-
-                context.logger().info("Registered custom entity {}", bedrockIdentifier);
-            } catch (Exception e) {
-                context.logger().warn("Failed to register custom entity {}: {}", bedrockIdentifier, e.getMessage());
-            }
-        }
-    }
-
-    private void onSpawnEntity(@NotNull PackEventContext<ServerSpawnEntityEvent, EntityPackModule> context) {
-        ServerSpawnEntityEvent event = context.event();
-
-        String javaId = event.entityType().identifier().toString();
-        CustomEntityDefinition definition = this.definitions.get(javaId);
-        if (definition != null) {
-            event.definition(definition);
-
-            // Carry the Java-side hitbox across so Bedrock collision and name-tag
-            // placement match the mod's intent instead of a generic default.
-            EntityType<?> javaType = this.javaTypes.get(javaId);
-            if (javaType != null) {
-                EntityDimensions dimensions = javaType.getDimensions();
-                event.preSpawnConsumer(entity -> {
-                    entity.override(GeyserEntityDataTypes.WIDTH, dimensions.width());
-                    entity.override(GeyserEntityDataTypes.HEIGHT, dimensions.height());
-                });
-            }
-        }
     }
 
     private void postProcess(@NotNull PackPostProcessContext<EntityPackModule> context) {

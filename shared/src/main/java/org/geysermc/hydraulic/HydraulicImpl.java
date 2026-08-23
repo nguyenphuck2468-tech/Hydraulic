@@ -1,7 +1,7 @@
 package org.geysermc.hydraulic;
 
 import net.minecraft.server.MinecraftServer;
-import org.geysermc.geyser.api.event.EventRegistrar;
+import org.geysermc.hydraulic.entity.EntityEventRegistrar;
 import org.geysermc.hydraulic.pack.PackManager;
 import org.geysermc.hydraulic.platform.HydraulicBootstrap;
 import org.geysermc.hydraulic.platform.HydraulicPlatform;
@@ -125,7 +125,14 @@ public class HydraulicImpl implements EventRegistrar {
             throw new IllegalStateException("Singleton HydraulicImpl has already been loaded!");
         }
 
-        return new HydraulicImpl(platform, bootstrap);
+        HydraulicImpl instance = new HydraulicImpl(platform, bootstrap);
+
+        // Geyser fires GeyserDefineEntitiesEvent early in its own startup, before
+        // the resource-pack phase we can hook; subscribe the moment the api exists
+        // via a background poller so the definitions register in time.
+        new EntityEventRegistrar().startPolling();
+
+        return instance;
     }
 
     /**
