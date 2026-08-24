@@ -120,7 +120,14 @@ public class PackManager {
 
         modelProvider = createModelProvider(mods, modPacks, this.getVanillaPath());
 
-        this.packConverters = new ArrayList<>(AssetConverters.converters(hydraulic.isDev()));
+        // The GeckoLib pipelines are flagged experimental upstream, but they must
+        // run unconditionally here: without them no entity geometry or animation
+        // is ever written, while EntityPackModule still emits client-entity
+        // definitions referencing geometry.<ns>.<name> - the real Bedrock client
+        // then silently renders nothing for every custom mob (observed live
+        // 2026-08-24: packs shipped textures/render controllers but zero
+        // geometry files, so all 144 registered mobs were invisible).
+        this.packConverters = new ArrayList<>(AssetConverters.converters(true));
         this.packConverters.remove(AssetConverters.MODEL);
         this.packConverters.remove(AssetConverters.MANIFEST);
         this.packConverters.add(AssetConverters.create(
