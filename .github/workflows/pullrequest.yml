@@ -21,7 +21,7 @@ env:
   PACK_CONVERTER_REPO: nguyenphuck2468-tech/PackConverter
   # Match the production integration revision; PR checks must not silently
   # consume a newer PackConverter master than the release workflow.
-  PACK_CONVERTER_REF: 8bb1d8fb1a901a79be04a1f13d5d9858ec9ca869
+  PACK_CONVERTER_REF: 3861182abe01a922c2c5fb3403c98efa1c7ce3be
 
 jobs:
   build:

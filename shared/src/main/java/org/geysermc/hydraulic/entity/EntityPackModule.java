@@ -52,6 +52,17 @@ import java.util.stream.Stream;
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
     private static final String ANIMATION_MAPPING_FILE = "entity-animations.json";
+    private static final Map<String, String> ALEXSMOBS_FALLBACK_GEOMETRIES = Map.ofEntries(
+            Map.entry("grizzly_bear", "geometry.pig"),
+            Map.entry("crocodile", "geometry.pig"),
+            Map.entry("komodo_dragon", "geometry.pig"),
+            Map.entry("alligator_snapping_turtle", "geometry.pig"),
+            Map.entry("elephant", "geometry.cow"),
+            Map.entry("moose", "geometry.cow"),
+            Map.entry("rhinoceros", "geometry.cow"),
+            Map.entry("gorilla", "geometry.zombie"),
+            Map.entry("gelada_monkey", "geometry.zombie")
+    );
     private Map<String, AnimationRefs> configuredAnimations = Map.of();
     private Path configuredAnimationsPath;
 
@@ -69,12 +80,17 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
             String namespace = key.getNamespace();
             String path = key.getPath();
+            String texture = findTexture(namespace, path, pack);
+            if (texture == null) {
+                context.logger().warn("Skipping custom Bedrock entity {}: no converted texture", key);
+                continue;
+            }
 
             JsonObject animations = collectAnimations(namespace, path, pack);
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
             pack.addExtraFile(
-                    clientEntity(namespace, path, animations, refs, pack),
+                    clientEntity(namespace, path, texture, animations, refs, pack),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
@@ -84,6 +100,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                         animationController(namespace, path, refs),
                         "animation_controllers/" + namespace + "." + path + ".animation_controllers.json");
             }
+            EntityEventRegistrar.markPackBacked(key.toString());
         }
     }
 
@@ -93,7 +110,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * animations actually play; otherwise any converted animations are attached
      * as plain references.
      */
-    private JsonObject clientEntity(String namespace, String path, JsonObject convertedAnimations,
+    private JsonObject clientEntity(String namespace, String path, String texture, JsonObject convertedAnimations,
                                     AnimationRefs refs, BedrockResourcePack pack) {
         JsonObject description = new JsonObject();
         description.addProperty("identifier", namespace + ":" + path);
@@ -103,7 +120,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         description.add("materials", materials);
 
         JsonObject textures = new JsonObject();
-        textures.addProperty("default", findTexture(namespace, path, pack));
+        textures.addProperty("default", texture);
         description.add("textures", textures);
 
         description.add("geometry", collectGeometries(namespace, path, pack));
@@ -348,7 +365,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         }
 
         if (defaultGeometry == null) {
-            defaultGeometry = staticFallbackGeometry(path);
+            defaultGeometry = staticFallbackGeometry(namespace, path);
         }
 
         // Order matters for readability only: default first in the JSON.
@@ -371,8 +388,12 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * upstream mod support - but a wrong-shaped mob is better than no
      * mob at all.
      */
-    private static String staticFallbackGeometry(String path) {
+    private static String staticFallbackGeometry(String namespace, String path) {
         String lower = path.toLowerCase(Locale.ROOT);
+        if (namespace.equals("alexsmobs")) {
+            String profile = ALEXSMOBS_FALLBACK_GEOMETRIES.get(lower);
+            if (profile != null) return profile;
+        }
         // Aquatic / large serpents - pig (stocky four-legged body)
         if (lower.contains("whale") || lower.contains("cachalot") || lower.contains("anaconda")
                 || lower.contains("serpent") || lower.contains("worm") || lower.contains("giant_squid")) {
@@ -415,11 +436,10 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * entity name, since mods lay out texture folders in many ways.
      */
     private String findTexture(String namespace, String path, BedrockResourcePack pack) {
-        String convention = "textures/entity/" + namespace + "/" + path;
         try {
             Path entityTextures = pack.directory().resolve("textures/entity");
             if (!Files.isDirectory(entityTextures)) {
-                return convention;
+                return null;
             }
 
             String exact = path + ".png";
@@ -447,9 +467,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                     }
                 }
             }
-            return contains != null ? contains : convention;
+            return contains;
         } catch (IOException e) {
-            return convention;
+            return null;
         }
     }
 

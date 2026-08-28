@@ -35,6 +35,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class EntityEventRegistrar {
     private static final Logger LOGGER = LoggerFactory.getLogger("EntityEventRegistrar");
     private static final long POLL_TIMEOUT_MS = 300_000;
+    private static final java.util.Set<String> PACK_BACKED_ENTITIES = ConcurrentHashMap.newKeySet();
+
+    static void markPackBacked(String entityId) {
+        PACK_BACKED_ENTITIES.add(entityId);
+    }
 
     /**
      * Bedrock entity identifier to the definition registered for it.
@@ -107,6 +112,11 @@ public final class EntityEventRegistrar {
     @Subscribe
     public void onSpawnEntity(@NotNull ServerSpawnEntityEvent event) {
         String javaId = event.entityType().identifier().toString();
+        // Definitions are registered before conversion. Do not replace a Java
+        // entity with a Bedrock definition that has no usable texture.
+        if (!PACK_BACKED_ENTITIES.contains(javaId)) {
+            return;
+        }
         CustomEntityDefinition definition = this.definitions.get(javaId);
         if (definition == null) {
             return;

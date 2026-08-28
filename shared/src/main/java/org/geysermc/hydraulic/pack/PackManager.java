@@ -181,6 +181,8 @@ public class PackManager {
                 .output(packPath)
                 .vanillaPackPath(vanillaPath)
                 .textureSubdirectory(mod.namespace())
+                .reflectionEntityIds(this.modsToEntities.get(mod.id()).stream()
+                        .map(type -> BuiltInRegistries.ENTITY_TYPE.getKey(type).toString()).toList())
                 .packageHandler(new PackPackager());
 
         converter.postProcessor((javaPack, bedrockPack) -> {
