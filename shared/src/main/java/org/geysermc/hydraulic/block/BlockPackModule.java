@@ -452,8 +452,6 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         }
 
         // Try and match the state
-        // TODO Handle multiple variants since we only take the first match
-        //      Will likely need to generate more geometry files and then alter bone visibility for each part
         if (multiVariant == null) {
             for (Selector selector : packState.multipart()) {
                 // Ignore none conditions
@@ -494,7 +492,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         continue;
                     }
 
-                    boolean test = state.getValue(foundProperty).toString().equals(match.value().toString());
+                    boolean test = matchesStateValue(state.getValue(foundProperty).toString(), match.value().toString());
                     if (!first) {
                         result = comparator.apply(result, test);
                     } else {
@@ -522,8 +520,12 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
         // We have a match! Now we need to find the model
         if (multiVariant != null && !multiVariant.variants().isEmpty()) {
-            // TODO: Handle multiple variants?
-            Variant variant = multiVariant.variants().get(0);
+            // Java uses weighted random variants. A generated Bedrock geometry
+            // cannot select per-position randomness, so choose one stable
+            // variant per complete block state instead of always rendering the
+            // first declaration.
+            int variantIndex = Math.floorMod(stableStateKey(state).hashCode(), multiVariant.variants().size());
+            Variant variant = multiVariant.variants().get(variantIndex);
             Key modelKey = variant.model();
 
             Model model = definition.modelProvider().model(modelKey);
@@ -537,12 +539,21 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         return null;
     }
 
+    private static String stableStateKey(BlockState state) {
+        return state.getProperties().stream()
+                .map(property -> property.getName() + "=" + state.getValue(property))
+                .sorted()
+                .collect(java.util.stream.Collectors.joining(","));
+    }
+
     private static MultiVariant matchState(@NotNull BlockState state, @NotNull Map<String, MultiVariant> variants) {
         List<String> properties = new ArrayList<>();
         for (Property<?> property : state.getProperties()) {
             properties.add(property.getName() + "=" + state.getValue(property).toString().toLowerCase());
         }
 
+        MultiVariant bestMatch = null;
+        int bestSpecificity = -1;
         for (Map.Entry<String, MultiVariant> entry : variants.entrySet()) {
             String variant = entry.getKey();
 
@@ -555,12 +566,22 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 }
             }
 
-            if (match) {
-                return entry.getValue();
+            if (match && property.length > bestSpecificity) {
+                bestMatch = entry.getValue();
+                bestSpecificity = property.length;
             }
         }
 
-        return null;
+        return bestMatch;
+    }
+
+    private static boolean matchesStateValue(String actual, String expected) {
+        for (String candidate : expected.split("\\|")) {
+            if (actual.equals(candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Nullable

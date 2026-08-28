@@ -64,6 +64,17 @@ public class PackContext<T extends PackModule<T>> {
     }
 
     /**
+     * Gets the running Hydraulic instance for module configuration that is
+     * shared across converted packs.
+     *
+     * @return the running Hydraulic instance
+     */
+    @NotNull
+    public HydraulicImpl hydraulic() {
+        return this.hydraulic;
+    }
+
+    /**
      * Gets the logger for this pack.
      *
      * @return the logger for this pack

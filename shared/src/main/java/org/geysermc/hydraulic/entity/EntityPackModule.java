@@ -9,6 +9,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
+import org.geysermc.hydraulic.Constants;
 import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
@@ -50,12 +51,17 @@ import java.util.stream.Stream;
  */
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
+    private static final String ANIMATION_MAPPING_FILE = "entity-animations.json";
+    private Map<String, AnimationRefs> configuredAnimations = Map.of();
+    private Path configuredAnimationsPath;
+
     public EntityPackModule() {
         this.postProcess(this::postProcess);
     }
 
     private void postProcess(@NotNull PackPostProcessContext<EntityPackModule> context) {
         BedrockResourcePack pack = context.bedrockResourcePack();
+        loadAnimationMappings(context);
 
         for (EntityType<?> type : context.entityTypes()) {
             Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
@@ -65,7 +71,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             String path = key.getPath();
 
             JsonObject animations = collectAnimations(namespace, path, pack);
-            AnimationRefs refs = resolveAnimationRefs(animations);
+            AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
             pack.addExtraFile(
                     clientEntity(namespace, path, animations, refs, pack),
@@ -193,9 +199,17 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      *
      * @return the resolved pair, or {@code null} when nothing can be bound
      */
-    private static AnimationRefs resolveAnimationRefs(JsonObject animations) {
+    private AnimationRefs resolveAnimationRefs(String entityId, JsonObject animations) {
         if (animations.size() == 0) {
             return null;
+        }
+
+        AnimationRefs configured = this.configuredAnimations.get(entityId);
+        if (configured != null) {
+            AnimationRefs valid = validAnimationRefs(configured, animations);
+            if (valid != null) {
+                return valid;
+            }
         }
 
         String idle = null;
@@ -214,6 +228,60 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             return new AnimationRefs(names.getFirst(), null);
         }
         return new AnimationRefs(idle, walk);
+    }
+
+    private static AnimationRefs validAnimationRefs(AnimationRefs refs, JsonObject animations) {
+        String idle = refs.idle() != null && animations.has(refs.idle()) ? refs.idle() : null;
+        String walk = refs.walk() != null && animations.has(refs.walk()) ? refs.walk() : null;
+        return idle == null && walk == null ? null : new AnimationRefs(idle, walk);
+    }
+
+    /**
+     * Loads optional per-entity animation bindings. The generated template is
+     * intentionally small: it is a user-editable escape hatch for mod names
+     * that do not contain conventional idle/walk suffixes.
+     */
+    private void loadAnimationMappings(PackPostProcessContext<EntityPackModule> context) {
+        Path path = context.hydraulic().dataFolder(Constants.MOD_ID).resolve(ANIMATION_MAPPING_FILE);
+        if (path.equals(this.configuredAnimationsPath)) {
+            return;
+        }
+        this.configuredAnimationsPath = path;
+        this.configuredAnimations = Map.of();
+
+        try {
+            Files.createDirectories(path.getParent());
+            if (!Files.exists(path)) {
+                Files.writeString(path, "{\n  \"entities\": {}\n}\n", StandardCharsets.UTF_8);
+                return;
+            }
+
+            JsonObject entities = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8))
+                    .getAsJsonObject().getAsJsonObject("entities");
+            if (entities == null) {
+                return;
+            }
+
+            Map<String, AnimationRefs> parsed = new HashMap<>();
+            for (Map.Entry<String, JsonElement> entry : entities.entrySet()) {
+                if (!entry.getValue().isJsonObject()) continue;
+                JsonObject mapping = entry.getValue().getAsJsonObject();
+                String idle = stringOrNull(mapping, "idle");
+                String walk = stringOrNull(mapping, "walk");
+                if (idle != null || walk != null) {
+                    parsed.put(entry.getKey(), new AnimationRefs(idle, walk));
+                }
+            }
+            this.configuredAnimations = Map.copyOf(parsed);
+        } catch (Exception e) {
+            context.logger().warn("Unable to load entity animation mappings from {}: {}", path, e.getMessage());
+        }
+    }
+
+    private static String stringOrNull(JsonObject object, String member) {
+        JsonElement value = object.get(member);
+        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
+                ? value.getAsString() : null;
     }
 
     private record AnimationRefs(String idle, String walk) {
