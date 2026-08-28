@@ -20,7 +20,9 @@ concurrency:
 
 env:
   PACK_CONVERTER_REPO: nguyenphuck2468-tech/PackConverter
-  PACK_CONVERTER_REF: master
+  # Keep Hydraulic artifacts reproducible. Update this SHA deliberately after
+  # validating a new PackConverter integration revision.
+  PACK_CONVERTER_REF: 7f3dafa8186f95583015d393a04c30c7f8c845bf
 
 jobs:
   build:

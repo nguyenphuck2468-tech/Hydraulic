@@ -68,7 +68,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             AnimationRefs refs = resolveAnimationRefs(animations);
 
             pack.addExtraFile(
-                    clientEntity(namespace, path, refs, pack),
+                    clientEntity(namespace, path, animations, refs, pack),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
@@ -87,7 +87,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * animations actually play; otherwise any converted animations are attached
      * as plain references.
      */
-    private JsonObject clientEntity(String namespace, String path, AnimationRefs refs, BedrockResourcePack pack) {
+    private JsonObject clientEntity(String namespace, String path, JsonObject convertedAnimations,
+                                    AnimationRefs refs, BedrockResourcePack pack) {
         JsonObject description = new JsonObject();
         description.addProperty("identifier", namespace + ":" + path);
 
@@ -101,16 +102,15 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
         description.add("geometry", collectGeometries(namespace, path, pack));
 
-        if (refs != null) {
+        if (convertedAnimations.size() > 0) {
             JsonObject animations = new JsonObject();
-            if (refs.idle() != null) {
-                animations.addProperty("idle", refs.idle());
-            }
-            if (refs.walk() != null) {
-                animations.addProperty("walk", refs.walk());
+            for (String name : convertedAnimations.keySet()) {
+                animations.addProperty(name, name);
             }
             description.add("animations", animations);
+        }
 
+        if (refs != null) {
             JsonArray animationControllers = new JsonArray();
             animationControllers.add(controllerName(namespace, path));
             description.add("animation_controllers", animationControllers);
@@ -211,10 +211,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         }
 
         if (idle == null && walk == null) {
-            if (names.size() == 1) {
-                return new AnimationRefs(names.get(0), null);
-            }
-            return null;
+            return new AnimationRefs(names.getFirst(), null);
         }
         return new AnimationRefs(idle, walk);
     }

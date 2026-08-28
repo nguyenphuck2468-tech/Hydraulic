@@ -54,6 +54,9 @@ public final class EntityEventRegistrar {
      * soon as the api instance is reachable. Safe to call during mod init.
      */
     public void startPolling() {
+        if (!subscribed.compareAndSet(false, true)) {
+            return;
+        }
         Thread poller = new Thread(this::pollAndSubscribe, "Hydraulic-EarlyEntitySubscribe");
         poller.setDaemon(true);
         poller.start();

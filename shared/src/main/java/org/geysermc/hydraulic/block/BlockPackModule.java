@@ -417,21 +417,21 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     context.logger().warn("Failed to get pick item for block {}: {}", blockLocation, e.getMessage());
                 }
 
-                /*
-                List<AABB> aabbs = collisionShape.toAabbs();
-                JavaBoundingBox[] bbs = new JavaBoundingBox[aabbs.size()];
-                for (int i = 0; i < aabbs.size(); i++) {
-                    AABB aabb = aabbs.get(i);
-                    bbs[i] = new JavaBoundingBox(aabb.minX, aabb.minY, aabb.minZ, aabb.maxX, aabb.maxY, aabb.maxZ);
-                }
-
-                javaBlockStateBuilder.collision(bbs);
-                 */
-                javaBlockStateBuilder.collision(new JavaBoundingBox[0]); // TODO
+                javaBlockStateBuilder.collision(toJavaBoundingBoxes(collisionShape));
 
                 event.registerOverride(javaBlockStateBuilder.build(), customBlockState);
             }
         }
+    }
+
+    private static JavaBoundingBox[] toJavaBoundingBoxes(VoxelShape shape) {
+        List<AABB> boxes = shape.toAabbs();
+        JavaBoundingBox[] result = new JavaBoundingBox[boxes.size()];
+        for (int i = 0; i < boxes.size(); i++) {
+            AABB box = boxes.get(i);
+            result[i] = new JavaBoundingBox(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+        }
+        return result;
     }
 
     @Nullable
