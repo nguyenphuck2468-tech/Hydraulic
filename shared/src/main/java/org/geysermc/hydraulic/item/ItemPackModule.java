@@ -71,8 +71,13 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             }
         } else if (itemModel instanceof SelectItemModel selectModel) { // See if we can actually do select models here
             handleModel(context, selectModel.fallback(), itemLocation);
-        } else if (itemModel instanceof CompositeItemModel compositeModel) { // TODO: See if we can stitch together item models, for now this will use just the first model
-            handleModel(context, compositeModel.models().getFirst(), itemLocation);
+        } else if (itemModel instanceof CompositeItemModel compositeModel) {
+            // A composite can contain a 2D icon and a separate handheld model.
+            // Inspect every child so either capability is preserved instead of
+            // silently classifying the item from whichever child happens first.
+            for (ItemModel child : compositeModel.models()) {
+                handleModel(context, child, itemLocation);
+            }
         } else if (itemModel instanceof RangeDispatchItemModel rangeDispatchModel) {
             handleModel(context, rangeDispatchModel.fallback(), itemLocation);
         }
