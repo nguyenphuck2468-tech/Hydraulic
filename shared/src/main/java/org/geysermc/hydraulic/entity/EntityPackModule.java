@@ -52,17 +52,6 @@ import java.util.stream.Stream;
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
     private static final String ANIMATION_MAPPING_FILE = "entity-animations.json";
-    private static final Map<String, String> ALEXSMOBS_FALLBACK_GEOMETRIES = Map.ofEntries(
-            Map.entry("grizzly_bear", "geometry.pig"),
-            Map.entry("crocodile", "geometry.pig"),
-            Map.entry("komodo_dragon", "geometry.pig"),
-            Map.entry("alligator_snapping_turtle", "geometry.pig"),
-            Map.entry("elephant", "geometry.cow"),
-            Map.entry("moose", "geometry.cow"),
-            Map.entry("rhinoceros", "geometry.cow"),
-            Map.entry("gorilla", "geometry.zombie"),
-            Map.entry("gelada_monkey", "geometry.zombie")
-    );
     private Map<String, AnimationRefs> configuredAnimations = Map.of();
     private Path configuredAnimationsPath;
 
@@ -90,7 +79,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
             pack.addExtraFile(
-                    clientEntity(namespace, path, texture, animations, refs, pack),
+                    clientEntity(namespace, path, type.getDimensions(), texture, animations, refs, pack),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
@@ -110,7 +99,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * animations actually play; otherwise any converted animations are attached
      * as plain references.
      */
-    private JsonObject clientEntity(String namespace, String path, String texture, JsonObject convertedAnimations,
+    private JsonObject clientEntity(String namespace, String path, EntityDimensions dimensions, String texture, JsonObject convertedAnimations,
                                     AnimationRefs refs, BedrockResourcePack pack) {
         JsonObject description = new JsonObject();
         description.addProperty("identifier", namespace + ":" + path);
@@ -123,7 +112,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         textures.addProperty("default", texture);
         description.add("textures", textures);
 
-        description.add("geometry", collectGeometries(namespace, path, pack));
+        description.add("geometry", collectGeometries(namespace, path, dimensions, pack));
 
         if (convertedAnimations.size() > 0) {
             JsonObject animations = new JsonObject();
@@ -328,7 +317,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * etc. The model is generic but visible, which is strictly better
      * than a silent no-render.</p>
      */
-    private JsonObject collectGeometries(String namespace, String path, BedrockResourcePack pack) {
+    private JsonObject collectGeometries(String namespace, String path, EntityDimensions dimensions, BedrockResourcePack pack) {
         JsonObject geometries = new JsonObject();
         String defaultGeometry = null;
 
@@ -365,7 +354,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         }
 
         if (defaultGeometry == null) {
-            defaultGeometry = staticFallbackGeometry(namespace, path);
+            defaultGeometry = staticFallbackGeometry(dimensions);
         }
 
         // Order matters for readability only: default first in the JSON.
@@ -378,39 +367,19 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     }
 
     /**
-     * Picks a vanilla Bedrock geometry reference so custom entities from
-     * mods that ship no static geometry (e.g. Fabric-only GeckoLib mods
-     * whose models are runtime-generated) still render as a placeholder
-     * instead of staying invisible. The choice is keyed on the entity
-     * name so large aquatic / flying mobs get a four-legged body, boss
-     * mobs a wider humanoid, etc. None of these match the real mob
-     * silhouette - that requires either client-side model dumping or
-     * upstream mod support - but a wrong-shaped mob is better than no
-     * mob at all.
+     * Picks a generic vanilla Bedrock geometry from the Java hitbox for every
+     * mod. This deliberately avoids per-mod name lists: the fallback is only
+     * used when no transferable model asset exists.
      */
-    private static String staticFallbackGeometry(String namespace, String path) {
-        String lower = path.toLowerCase(Locale.ROOT);
-        if (namespace.equals("alexsmobs")) {
-            String profile = ALEXSMOBS_FALLBACK_GEOMETRIES.get(lower);
-            if (profile != null) return profile;
-        }
-        // Aquatic / large serpents - pig (stocky four-legged body)
-        if (lower.contains("whale") || lower.contains("cachalot") || lower.contains("anaconda")
-                || lower.contains("serpent") || lower.contains("worm") || lower.contains("giant_squid")) {
+    private static String staticFallbackGeometry(EntityDimensions dimensions) {
+        float width = dimensions.width();
+        float height = dimensions.height();
+        if (width >= height * 1.25f) {
             return "geometry.pig";
         }
-        // Aquatic / flying four/few-legged - cow
-        if (lower.contains("fish") || lower.contains("shark") || lower.contains("ray")
-                || lower.contains("drake") || lower.contains("cosmaw") || lower.contains("maned_wolf")) {
+        if (width >= 0.9f || height >= 2.4f) {
             return "geometry.cow";
         }
-        // Big predators / "boss" mobs - wider humanoid (zombie is 1-block-wide biped)
-        if (lower.contains("laviathan") || lower.contains("endergrade") || lower.contains("froststalker")
-                || lower.contains("tusklin") || lower.contains("cachalot") || lower.contains("dropbear")
-                || lower.contains("mungus") || lower.contains("guster") || lower.contains("straddler")) {
-            return "geometry.zombie";
-        }
-        // Default humanoid
         return "geometry.humanoid.custom";
     }
 
