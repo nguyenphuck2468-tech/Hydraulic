@@ -63,12 +63,13 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
             String namespace = key.getNamespace();
             String path = key.getPath();
+            EntityDimensions dimensions = type.getDimensions();
 
             JsonObject animations = collectAnimations(namespace, path, pack);
             AnimationRefs refs = resolveAnimationRefs(animations);
 
             pack.addExtraFile(
-                    clientEntity(namespace, path, refs, pack),
+                    clientEntity(namespace, path, dimensions, refs, pack),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
@@ -87,7 +88,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * animations actually play; otherwise any converted animations are attached
      * as plain references.
      */
-    private JsonObject clientEntity(String namespace, String path, AnimationRefs refs, BedrockResourcePack pack) {
+    private JsonObject clientEntity(String namespace, String path, EntityDimensions dimensions, AnimationRefs refs, BedrockResourcePack pack) {
         JsonObject description = new JsonObject();
         description.addProperty("identifier", namespace + ":" + path);
 
@@ -99,7 +100,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         textures.addProperty("default", findTexture(namespace, path, pack));
         description.add("textures", textures);
 
-        description.add("geometry", collectGeometries(namespace, path, pack));
+        description.add("geometry", collectGeometries(namespace, path, dimensions, pack));
 
         if (refs != null) {
             JsonObject animations = new JsonObject();
@@ -241,12 +242,12 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * with no raw .geo.json on disk - e.g. Alex's Mobs), every lookup
      * here will return null and the entity would otherwise be invisible
      * on Bedrock. To make those mobs at least show up, fall back to
-     * vanilla Bedrock geometry references chosen by entity size: small
-     * mobs get a humanoid, four-legged mobs get a quadruped skeleton,
-     * etc. The model is generic but visible, which is strictly better
-     * than a silent no-render.</p>
+     * a vanilla Bedrock geometry reference chosen from the entity's
+     * actual Java hitbox - wide and tall gets a zombie, long and low
+     * gets a spider, tiny gets a humanoid. The model is generic but
+     * visible, which is strictly better than a silent no-render.</p>
      */
-    private JsonObject collectGeometries(String namespace, String path, BedrockResourcePack pack) {
+    private JsonObject collectGeometries(String namespace, String path, EntityDimensions dimensions, BedrockResourcePack pack) {
         JsonObject geometries = new JsonObject();
         String defaultGeometry = null;
 
@@ -283,7 +284,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         }
 
         if (defaultGeometry == null) {
-            defaultGeometry = staticFallbackGeometry(path);
+            defaultGeometry = sizedFallbackGeometry(dimensions);
         }
 
         // Order matters for readability only: default first in the JSON.
@@ -296,35 +297,39 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     }
 
     /**
-     * Picks a vanilla Bedrock geometry reference so custom entities from
-     * mods that ship no static geometry (e.g. Fabric-only GeckoLib mods
-     * whose models are runtime-generated) still render as a placeholder
-     * instead of staying invisible. The choice is keyed on the entity
-     * name so large aquatic / flying mobs get a four-legged body, boss
-     * mobs a wider humanoid, etc. None of these match the real mob
-     * silhouette - that requires either client-side model dumping or
-     * upstream mod support - but a wrong-shaped mob is better than no
-     * mob at all.
+     * Picks a vanilla Bedrock geometry whose bounding box is closest to the
+     * entity's actual Java hitbox, so a 4-block-long whale gets a long body
+     * (pig) and a 1-block raccoon gets a humanoid. Sizes are in Java units
+     * (1 block = 0.6m wide, ~1.8m tall for player). Boundaries are tuned
+     * against the Alex's Mobs dimensions table so the look stays roughly
+     * "creature-shaped" until real per-mob geometry is available.
      */
-    private static String staticFallbackGeometry(String path) {
-        String lower = path.toLowerCase(Locale.ROOT);
-        // Aquatic / large serpents - pig (stocky four-legged body)
-        if (lower.contains("whale") || lower.contains("cachalot") || lower.contains("anaconda")
-                || lower.contains("serpent") || lower.contains("worm") || lower.contains("giant_squid")) {
+    private static String sizedFallbackGeometry(EntityDimensions dimensions) {
+        float width = dimensions.width();
+        float height = dimensions.height();
+        // Long + low -> pig (stocky four-legged body) or spider (wide low arachnid)
+        if (width >= 2.5f && height <= 1.0f) {
             return "geometry.pig";
         }
-        // Aquatic / flying four/few-legged - cow
-        if (lower.contains("fish") || lower.contains("shark") || lower.contains("ray")
-                || lower.contains("drake") || lower.contains("cosmaw") || lower.contains("maned_wolf")) {
-            return "geometry.cow";
+        if (width >= 2.0f && height <= 1.4f) {
+            return "geometry.spider";
         }
-        // Big predators / "boss" mobs - wider humanoid (zombie is 1-block-wide biped)
-        if (lower.contains("laviathan") || lower.contains("endergrade") || lower.contains("froststalker")
-                || lower.contains("tusklin") || lower.contains("cachalot") || lower.contains("dropbear")
-                || lower.contains("mungus") || lower.contains("guster") || lower.contains("straddler")) {
+        // Tall biped - zombie for bossy mobs, wither_skeleton for the tallest
+        if (height >= 3.0f) {
+            return "geometry.wither_skeleton";
+        }
+        if (height >= 1.9f) {
             return "geometry.zombie";
         }
-        // Default humanoid
+        // Wide and short four-legged - cow
+        if (width >= 1.2f && height <= 1.4f) {
+            return "geometry.cow";
+        }
+        // Small quadruped - wolf
+        if (height <= 0.9f && width >= 0.5f) {
+            return "geometry.wolf";
+        }
+        // Default biped humanoid
         return "geometry.humanoid.custom";
     }
 
