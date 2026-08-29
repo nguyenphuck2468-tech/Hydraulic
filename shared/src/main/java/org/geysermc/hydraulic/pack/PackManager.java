@@ -118,6 +118,19 @@ public class PackManager {
                 new PackLogListener(LOGGER)
         );
 
+        // Runtime Java-model extraction needs the unstripped client classes;
+        // the vanilla asset cache above intentionally removes them.
+        Path clientRuntime = hydraulic.dataFolder(Constants.MOD_ID).resolve(
+                "cache/client-runtime-" + SharedConstants.getCurrentVersion().id() + ".jar");
+        VanillaPackProvider.createClientRuntime(
+                clientRuntime,
+                SharedConstants.getCurrentVersion().id(),
+                new PackLogListener(LOGGER)
+        );
+        if (Files.isRegularFile(clientRuntime)) {
+            System.setProperty("hydraulic.minecraft.merged", clientRuntime.toString());
+        }
+
         modelProvider = createModelProvider(mods, modPacks, this.getVanillaPath());
 
         // The GeckoLib pipelines are flagged experimental upstream, but they must
