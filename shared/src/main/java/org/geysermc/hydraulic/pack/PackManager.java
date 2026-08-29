@@ -39,6 +39,7 @@ import team.unnamed.creative.serialize.minecraft.MinecraftResourcePackReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -59,7 +60,7 @@ public class PackManager {
      * Increment when the generated Bedrock-pack contract changes. This keeps
      * cached packs from surviving a Hydraulic update that changes conversion.
      */
-    public static final String PACK_GENERATION_REVISION = "12";
+    public static final String PACK_GENERATION_REVISION = "13";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -268,6 +269,9 @@ public class PackManager {
                 LOGGER.info("Conversion report {} [blocks={}, items={}, entities={}, fallback={}, files={}, {} ms, {} bytes]", mod.id(),
                         blockCount, itemCount, entityCount, report.fallbackSummary(), validation.files(),
                         (System.nanoTime() - startedAt) / 1_000_000, Files.size(packPath));
+                Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(mod.id() + ".json");
+                Files.createDirectories(reportPath.getParent());
+                Files.writeString(reportPath, report.json(blockCount, itemCount, entityCount).toString(), StandardCharsets.UTF_8);
             } catch (IOException exception) {
                 try {
                     Files.deleteIfExists(packPath);
