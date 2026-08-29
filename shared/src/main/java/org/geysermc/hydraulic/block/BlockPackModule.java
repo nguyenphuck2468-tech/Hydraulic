@@ -72,9 +72,11 @@ import java.util.function.BiFunction;
 @AutoService(PackModule.class)
 public class BlockPackModule extends PackModule<BlockPackModule> {
     private static final String STATE_CONDITION = "query.block_property('%s') == %s";
+    private static final int BEDROCK_MAX_PROPERTY_VALUES = 16;
 
     private final Map<String, StateDefinition> blockStates = new HashMap<>();
     private final Set<String> emptyModels = new HashSet<>();
+    private final Set<Identifier> fallbackBlocks = new HashSet<>();
 
     public BlockPackModule() {
         this.listenOn(GeyserDefineCustomBlocksEvent.class, this::onDefineCustomBlocks);
@@ -197,7 +199,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
             for (Property<?> property : block.getStateDefinition().getProperties()) {
                 if (property instanceof IntegerProperty intProperty) {
-                    builder.intProperty(property.getName(), List.copyOf(intProperty.getPossibleValues()));
+                    builder.intProperty(property.getName(), bedrockValues(intProperty));
                 } else if (property instanceof BooleanProperty) {
                     builder.booleanProperty(property.getName());
                 } else if (property instanceof EnumProperty<?> enumProperty) {
@@ -208,10 +210,15 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             }
 
             List<CustomBlockPermutation> permutations = new ArrayList<>();
-            CustomBlockComponents.Builder baseComponentBuilder = CustomBlockComponents.builder();
+            CustomBlockComponents.Builder baseComponentBuilder = fallbackComponents(blockLocation, block.defaultBlockState());
             for (BlockState state : block.getStateDefinition().getPossibleStates()) {
                 ModelDefinition definition = getModel(context, blockLocation, state);
                 if (definition == null) {
+                    // A missing or unsupported Java model must remain visible on
+                    // Bedrock. The state-specific model still wins when present.
+                    if (fallbackBlocks.add(blockLocation)) {
+                        context.logger().warn("Using full-block fallback for {}", blockLocation);
+                    }
                     continue;
                 }
 
@@ -337,6 +344,9 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 List<String> conditions = new ArrayList<>();
                 for (Property<?> property : state.getProperties()) {
                     String propValue = state.getValue(property).toString();
+                    if (property instanceof IntegerProperty intProperty) {
+                        propValue = Integer.toString(bedrockValue(intProperty, state.getValue(intProperty)));
+                    }
                     if (property instanceof EnumProperty<?>) {
                         propValue = "'" + propValue.toLowerCase() + "'";
                     }
@@ -377,7 +387,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 CustomBlockState.Builder stateBuilder = blockData.blockStateBuilder();
                 for (Property<?> property : state.getProperties()) {
                     if (property instanceof IntegerProperty intProperty) {
-                        stateBuilder.intProperty(property.getName(), state.getValue(intProperty));
+                        stateBuilder.intProperty(property.getName(), bedrockValue(intProperty, state.getValue(intProperty)));
                     } else if (property instanceof BooleanProperty booleanProperty) {
                         stateBuilder.booleanProperty(property.getName(), state.getValue(booleanProperty));
                     } else if (property instanceof EnumProperty<?> enumProperty) {
@@ -432,6 +442,43 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             result[i] = new JavaBoundingBox(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
         }
         return result;
+    }
+
+    private static CustomBlockComponents.Builder fallbackComponents(Identifier blockLocation, BlockState state) {
+        String texture = PackUtil.getTextureName(blockLocation.getNamespace() + ":block/" + blockLocation.getPath());
+        VoxelShape shape = state.getShape(new SingletonBlockGetter(state), BlockPos.ZERO);
+        VoxelShape collisionShape = state.getCollisionShape(new SingletonBlockGetter(state), BlockPos.ZERO);
+        return CustomBlockComponents.builder()
+                .geometry(GeometryComponent.builder().identifier("minecraft:geometry.full_block").build())
+                .materialInstance("*", MaterialInstance.builder()
+                        .texture(texture)
+                        .renderMethod(state.canOcclude() ? "opaque" : "blend")
+                        .faceDimming(true)
+                        .ambientOcclusion(true)
+                        .build())
+                .selectionBox(createBoxComponent(shape))
+                .collisionBox(createBoxComponent(collisionShape));
+    }
+
+    static List<Integer> bedrockValues(IntegerProperty property) {
+        List<Integer> values = new ArrayList<>(property.getPossibleValues());
+        if (values.size() <= BEDROCK_MAX_PROPERTY_VALUES) {
+            return values;
+        }
+        List<Integer> compacted = new ArrayList<>(BEDROCK_MAX_PROPERTY_VALUES);
+        for (int index = 0; index < BEDROCK_MAX_PROPERTY_VALUES; index++) {
+            compacted.add(index);
+        }
+        return compacted;
+    }
+
+    static int bedrockValue(IntegerProperty property, int value) {
+        List<Integer> values = new ArrayList<>(property.getPossibleValues());
+        if (values.size() <= BEDROCK_MAX_PROPERTY_VALUES) {
+            return value;
+        }
+        int index = values.indexOf(value);
+        return Math.round(index * (BEDROCK_MAX_PROPERTY_VALUES - 1f) / (values.size() - 1f));
     }
 
     @Nullable

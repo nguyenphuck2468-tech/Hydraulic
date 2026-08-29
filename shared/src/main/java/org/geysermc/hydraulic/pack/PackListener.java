@@ -129,7 +129,7 @@ public class PackListener {
                 packsToLoad.put(mod.id(), Pair.of(mod, packPath));
             } else {
                 // We don't need to convert the pack, just register it
-                LOGGER.info("Registering already converted pack for mod {}", mod.id());
+                LOGGER.info("Reusing converted pack for mod {} [revision={}]", mod.id(), PackManager.PACK_GENERATION_REVISION);
                 event.register(ResourcePack.create(PackCodec.path(packPath)), PriorityOption.NORMAL);
             }
         }
@@ -178,11 +178,14 @@ public class PackListener {
                 return true;
             }
 
+            String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
             try (InputStream markerStream = zip.getInputStream(generationMarkerEntry);
                  InputStreamReader markerReader = new InputStreamReader(markerStream)) {
                 JsonObject marker = GSON.fromJson(markerReader, JsonObject.class);
                 if (marker == null || !marker.has("revision")
-                        || !PackManager.PACK_GENERATION_REVISION.equals(marker.get("revision").getAsString())) {
+                        || !PackManager.PACK_GENERATION_REVISION.equals(marker.get("revision").getAsString())
+                        || !marker.has("fingerprint")
+                        || !fingerprint.equals(marker.get("fingerprint").getAsString())) {
                     return true;
                 }
             }
@@ -194,8 +197,7 @@ public class PackListener {
                     return true;
                 }
 
-                String modUUID = PackUtil.getModUUID(mod.roots()).toString();
-                return !modUUID.equals(manifest.header().uuid());
+                return !fingerprint.equals(manifest.header().uuid());
             }
         } catch (IOException | RuntimeException exception) {
             // A partial or invalid cached archive must be regenerated rather than

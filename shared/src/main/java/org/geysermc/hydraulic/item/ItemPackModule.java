@@ -152,7 +152,13 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 baseModel = assets.model(Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath()));
             }
             if (baseModel == null) {
-                context.logger().warn("Item {} has no item model, skipping", itemLocation);
+                Key fallbackTexture = findFallbackTexture(assets, itemLocation);
+                if (fallbackTexture == null) {
+                    context.logger().warn("Item {} has no item model or texture, skipping", itemLocation);
+                    continue;
+                }
+                bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallbackTexture).replace(".png", ""));
+                context.logger().warn("Item {} has no item model; using texture fallback", itemLocation);
                 continue;
             }
 
@@ -172,6 +178,17 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             String outputLoc = getOutputFromModel(context, layer0.key()); // TODO: sort this out, layer0.key() can be null, but the method we use doesn't want that
             bedrockPack.addItemTexture(itemLocation.toString(), outputLoc.replace(".png", ""));
         }
+    }
+
+    private static Key findFallbackTexture(ResourcePack assets, Identifier itemLocation) {
+        Key itemTexture = Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath());
+        Key blockTexture = Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath());
+        for (var texture : assets.textures()) {
+            if (texture.key().equals(itemTexture) || texture.key().equals(blockTexture)) {
+                return texture.key();
+            }
+        }
+        return null;
     }
 
     @Override

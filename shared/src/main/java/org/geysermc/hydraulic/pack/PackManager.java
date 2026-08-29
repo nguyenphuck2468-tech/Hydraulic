@@ -22,6 +22,7 @@ import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.pack.converter.CustomModelConverter;
 import org.geysermc.hydraulic.pack.modules.MetadataPackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
+import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.converter.PackConverter;
 import org.geysermc.pack.converter.pipeline.AssetConverters;
 import org.geysermc.pack.converter.pipeline.ConverterPipeline;
@@ -58,7 +59,7 @@ public class PackManager {
      * Increment when the generated Bedrock-pack contract changes. This keeps
      * cached packs from surviving a Hydraulic update that changes conversion.
      */
-    public static final String PACK_GENERATION_REVISION = "6";
+    public static final String PACK_GENERATION_REVISION = "7";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -192,6 +193,12 @@ public class PackManager {
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     boolean createPack(@NotNull ModInfo mod, @NotNull Path packPath) {
+        long startedAt = System.nanoTime();
+        String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
+        int blockCount = this.modsToBlocks.get(mod.id()).size();
+        int itemCount = this.modsToItems.get(mod.id()).size();
+        int entityCount = this.modsToEntities.get(mod.id()).size();
+        LOGGER.info("Converting {} [blocks={}, items={}, entities={}, roots={}]", mod.id(), blockCount, itemCount, entityCount, mod.roots().size());
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
         pipelines.add(AssetConverters.create(new MetadataPackModule(mod)));
 
@@ -209,6 +216,10 @@ public class PackManager {
         converter.postProcessor((javaPack, bedrockPack) -> {
             JsonObject generationMarker = new JsonObject();
             generationMarker.addProperty("revision", PACK_GENERATION_REVISION);
+            generationMarker.addProperty("fingerprint", fingerprint);
+            generationMarker.addProperty("blocks", blockCount);
+            generationMarker.addProperty("items", itemCount);
+            generationMarker.addProperty("entities", entityCount);
             bedrockPack.addExtraFile(generationMarker, PACK_GENERATION_MARKER);
 
             for (PackModule<?> module : this.modules) {
@@ -241,7 +252,17 @@ public class PackManager {
             return false;
         }
 
-        return Files.isRegularFile(packPath);
+        boolean created = Files.isRegularFile(packPath);
+        if (created) {
+            try {
+                LOGGER.info("Converted {} in {} ms -> {} bytes [fingerprint={}]", mod.id(),
+                        (System.nanoTime() - startedAt) / 1_000_000, Files.size(packPath), fingerprint);
+            } catch (IOException ignored) {
+                LOGGER.info("Converted {} in {} ms [fingerprint={}]", mod.id(),
+                        (System.nanoTime() - startedAt) / 1_000_000, fingerprint);
+            }
+        }
+        return created;
     }
 
     private void callEvents(@NotNull Event event) {
