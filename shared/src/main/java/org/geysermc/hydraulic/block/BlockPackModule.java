@@ -246,8 +246,13 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     String geoName = "geometry." + (namespace.equals(Key.MINECRAFT_NAMESPACE) ? "" : namespace + ".") + geoKey;
 
                     if (emptyModels.contains(key.toString())) {
-                        context.logger().warn("Missing block model for block {}", blockLocation);
-                        geoName = "geometry." + Constants.MOD_ID + ".empty";
+                        // A stitched-but-empty model is just as invisible as a
+                        // missing one. Keep the block visible and let its normal
+                        // material bindings supply the converted texture.
+                        if (fallbackBlocks.add(blockLocation)) {
+                            context.logger().warn("Using full-block fallback for empty model {}", blockLocation);
+                        }
+                        geoName = "minecraft:geometry.full_block";
                     }
 
                     componentsBuilder.geometry(GeometryComponent.builder()

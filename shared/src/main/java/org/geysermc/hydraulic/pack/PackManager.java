@@ -59,7 +59,7 @@ public class PackManager {
      * Increment when the generated Bedrock-pack contract changes. This keeps
      * cached packs from surviving a Hydraulic update that changes conversion.
      */
-    public static final String PACK_GENERATION_REVISION = "7";
+    public static final String PACK_GENERATION_REVISION = "8";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
