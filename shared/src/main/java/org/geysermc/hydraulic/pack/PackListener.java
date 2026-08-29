@@ -2,6 +2,7 @@ package org.geysermc.hydraulic.pack;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import net.minecraft.SharedConstants;
 import org.apache.commons.lang3.tuple.Pair;
@@ -172,8 +173,18 @@ public class PackListener {
     private boolean checkNeedsConversion(ModInfo mod, Path packPath) {
         try (ZipFile zip = new ZipFile(packPath.toFile())) {
             var manifestEntry = zip.getEntry("manifest.json");
-            if (manifestEntry == null) {
+            var generationMarkerEntry = zip.getEntry(PackManager.PACK_GENERATION_MARKER);
+            if (manifestEntry == null || generationMarkerEntry == null) {
                 return true;
+            }
+
+            try (InputStream markerStream = zip.getInputStream(generationMarkerEntry);
+                 InputStreamReader markerReader = new InputStreamReader(markerStream)) {
+                JsonObject marker = GSON.fromJson(markerReader, JsonObject.class);
+                if (marker == null || !marker.has("revision")
+                        || !PackManager.PACK_GENERATION_REVISION.equals(marker.get("revision").getAsString())) {
+                    return true;
+                }
             }
 
             try (InputStream inputStream = zip.getInputStream(manifestEntry);

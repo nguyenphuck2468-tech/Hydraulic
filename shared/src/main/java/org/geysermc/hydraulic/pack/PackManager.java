@@ -4,6 +4,7 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
+import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.component.DataComponents;
@@ -52,6 +53,13 @@ import java.util.stream.Stream;
  */
 public class PackManager {
     private static final Logger LOGGER = LogUtils.getLogger();
+
+    /**
+     * Increment when the generated Bedrock-pack contract changes. This keeps
+     * cached packs from surviving a Hydraulic update that changes conversion.
+     */
+    public static final String PACK_GENERATION_REVISION = "2";
+    public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
             // Fabric
@@ -199,6 +207,10 @@ public class PackManager {
                 .packageHandler(new PackPackager());
 
         converter.postProcessor((javaPack, bedrockPack) -> {
+            JsonObject generationMarker = new JsonObject();
+            generationMarker.addProperty("revision", PACK_GENERATION_REVISION);
+            bedrockPack.addExtraFile(generationMarker, PACK_GENERATION_MARKER);
+
             for (PackModule<?> module : this.modules) {
                 PackPostProcessContext context = new PackPostProcessContext(this.hydraulic, mod, module, converter, javaPack, bedrockPack, packPath, modelProvider);
                 if (!module.test(context)) {
