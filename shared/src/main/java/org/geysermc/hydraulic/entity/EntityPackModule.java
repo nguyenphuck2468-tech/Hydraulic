@@ -19,12 +19,11 @@ import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -64,6 +63,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     private void postProcess(@NotNull PackPostProcessContext<EntityPackModule> context) {
         BedrockResourcePack pack = context.bedrockResourcePack();
         loadAnimationMappings(context);
+        List<TextureAsset> textures = textureAssets(pack);
 
         for (EntityType<?> type : context.entityTypes()) {
             Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
@@ -71,7 +71,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
             String namespace = key.getNamespace();
             String path = key.getPath();
-            TextureMatch texture = findTexture(namespace, path, pack);
+            TextureMatch texture = findTexture(path, textures);
             if (texture == null) {
                 context.logger().warn("Skipping custom Bedrock entity {}: no converted texture", key);
                 context.report().outcome("entity-missing-texture", key.toString());
@@ -82,6 +82,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 context.report().fallback("entity-texture");
                 context.report().outcome("entity-texture-fallback", key.toString());
             }
+            context.report().resolution(texture.fallback() ? "entity-texture-fallback" : "entity-texture", key.toString(), texture.path());
 
             boolean hitboxFallback = !hasNativeGeometry(namespace, path, pack);
             if (hitboxFallback) {
@@ -529,48 +530,50 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * converted entity textures for a file named after (or containing) the
      * entity name, since mods lay out texture folders in many ways.
      */
-    private TextureMatch findTexture(String namespace, String path, BedrockResourcePack pack) {
-        try {
-            Path textures = pack.directory().resolve("textures");
-            if (!Files.isDirectory(textures)) {
-                return null;
-            }
+    private static List<TextureAsset> textureAssets(BedrockResourcePack pack) {
+        Path textures = pack.directory().resolve("textures");
+        if (!Files.isDirectory(textures)) {
+            return List.of();
+        }
+        try (Stream<Path> candidates = Files.walk(textures)) {
+            return candidates.filter(Files::isRegularFile)
+                    .map(candidate -> textureAsset(pack, candidate))
+                    .filter(java.util.Objects::nonNull)
+                    .sorted(Comparator.comparing(TextureAsset::path))
+                    .toList();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
 
-            String exact = path + ".png";
-            String exactTga = path + ".tga";
-            String best = null;
-            int bestScore = 0;
-            try (Stream<Path> candidates = Files.walk(textures)) {
-                for (Path candidate : (Iterable<Path>) candidates::iterator) {
-                    if (!Files.isRegularFile(candidate)) continue;
-
-                    String name = candidate.getFileName().toString();
-                    String relative = pack.directory().relativize(candidate).toString().replace(File.separatorChar, '/');
-                    if (relative.endsWith(".png")) {
-                        relative = relative.substring(0, relative.length() - ".png".length());
-                    } else if (relative.endsWith(".tga")) {
-                        relative = relative.substring(0, relative.length() - ".tga".length());
-                    } else {
-                        continue;
-                    }
-
-                    if (name.equals(exact) || name.equals(exactTga)) {
-                        return new TextureMatch(relative, false);
-                    }
-                    // A fuzzy match must stay in entity assets. A matching
-                    // item or armor name is usually a different visual asset.
-                    if (!relative.startsWith("textures/entity/")) continue;
-                    int score = textureScore(path, relative);
-                    if (score > bestScore) {
-                        best = relative;
-                        bestScore = score;
-                    }
-                }
-            }
-            return best == null ? null : new TextureMatch(best, true);
-        } catch (IOException e) {
+    private static TextureAsset textureAsset(BedrockResourcePack pack, Path candidate) {
+        String name = candidate.getFileName().toString();
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".png") && !lower.endsWith(".tga")) {
             return null;
         }
+        int extension = name.lastIndexOf('.');
+        String relative = pack.directory().relativize(candidate).toString().replace('\\', '/');
+        return new TextureAsset(relative.substring(0, relative.lastIndexOf('.')), name.substring(0, extension));
+    }
+
+    private static TextureMatch findTexture(String path, List<TextureAsset> textures) {
+        TextureAsset best = null;
+        int bestScore = 0;
+        for (TextureAsset texture : textures) {
+            if (texture.name().equals(path)) {
+                return new TextureMatch(texture.path(), false);
+            }
+            // A fuzzy match must stay in entity assets. A matching item or
+            // armor name is usually a different visual asset.
+            if (!texture.path().startsWith("textures/entity/")) continue;
+            int score = textureScore(path, texture.path());
+            if (score > bestScore) {
+                best = texture;
+                bestScore = score;
+            }
+        }
+        return best == null ? null : new TextureMatch(best.path(), true);
     }
 
     private static int textureScore(String entityPath, String texturePath) {
@@ -612,6 +615,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     }
 
     private record TextureMatch(String path, boolean fallback) {
+    }
+
+    private record TextureAsset(String path, String name) {
     }
 
     /**

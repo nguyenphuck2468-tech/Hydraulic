@@ -48,6 +48,21 @@ class PackArchiveValidatorTest {
     }
 
     @Test
+    void reportsEntityTextureReferencesThatAreMissingFromTheArchive() throws IOException {
+        Path archive = temporaryDirectory.resolve("fixture.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "entity/example.mob.entity.json", "{\"minecraft:client_entity\":{\"description\":{\"textures\":{\"default\":\"textures/entity/example/mob\"}}}}");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertTrue(result.valid());
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity texture")));
+    }
+
+    @Test
     void summarizesFallbacksWithoutPerModRules() {
         ConversionReport report = new ConversionReport();
         report.fallback("item-texture");
@@ -63,10 +78,12 @@ class PackArchiveValidatorTest {
     void recordsAffectedIdsAndPhaseTimings() {
         ConversionReport report = new ConversionReport();
         report.outcome("entity-hitbox", "example:beast");
+        report.resolution("entity-texture", "example:beast", "textures/entity/example/beast");
 
         var json = report.json(0, 0, 1, 12, 34, 56);
 
         assertTrue(json.getAsJsonObject("outcome_ids").getAsJsonArray("entity-hitbox").contains(new com.google.gson.JsonPrimitive("example:beast")));
+        assertTrue(json.getAsJsonObject("asset_resolutions").getAsJsonObject("entity-texture").get("example:beast").getAsString().endsWith("/beast"));
         assertTrue(json.getAsJsonObject("timings_ms").get("package").getAsLong() == 34);
     }
 

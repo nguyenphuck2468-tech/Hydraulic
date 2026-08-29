@@ -167,6 +167,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 context.logger().warn("Item {} has no item model; using texture fallback", itemLocation);
                 context.report().fallback("item-texture");
                 context.report().outcome(fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString());
+                context.report().resolution(fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString(), fallback.key().toString());
                 continue;
             }
 
@@ -180,6 +181,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                     context.logger().warn("Item {} has no layer0 texture; using texture fallback", itemLocation);
                     context.report().fallback("item-texture");
                     context.report().outcome(fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString());
+                    context.report().resolution(fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString(), fallback.key().toString());
                 } else {
                     // Block items can intentionally use block geometry, but they
                     // still need an outcome so coverage reports remain complete.
@@ -195,6 +197,9 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             String outputLoc = getOutputFromModel(context, layer0.key()); // TODO: sort this out, layer0.key() can be null, but the method we use doesn't want that
             bedrockPack.addItemTexture(itemLocation.toString(), outputLoc.replace(".png", ""));
             context.report().outcome("item-direct-model", itemLocation.toString());
+            if (layer0.key() != null) {
+                context.report().resolution("item-direct-model", itemLocation.toString(), layer0.key().toString());
+            }
         }
     }
 
