@@ -77,12 +77,19 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 continue;
             }
 
-            if (!hasNativeGeometry(namespace, path, pack)) {
+            boolean hitboxFallback = !hasNativeGeometry(namespace, path, pack);
+            if (hitboxFallback) {
                 addHitboxGeometry(namespace, path, type.getDimensions(), pack);
-                context.logger().warn("Entity {} has no converted geometry; using hitbox fallback without custom animation", key);
+                context.logger().warn("Entity {} has no converted geometry; using hitbox fallback", key);
                 context.report().fallback("entity-hitbox");
             }
             JsonObject animations = collectAnimations(namespace, path, pack);
+            if (animations.size() == 0 && hitboxFallback) {
+                animations = fallbackAnimations(namespace, path);
+                pack.addExtraFile(animationFile(animations), "animations/" + namespace + "." + path + ".animation.json");
+                context.logger().warn("Entity {} has no converted animation; using generic idle/walk fallback", key);
+                context.report().fallback("entity-animation");
+            }
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
             pack.addExtraFile(
@@ -241,6 +248,44 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             return new AnimationRefs(names.getFirst(), null);
         }
         return new AnimationRefs(idle, walk);
+    }
+
+    static JsonObject fallbackAnimations(String namespace, String path) {
+        String prefix = "animation." + namespace + "." + path;
+        JsonObject idle = new JsonObject();
+        idle.addProperty("loop", true);
+        idle.add("bones", boneAnimation("math.sin(query.life_time * 3.0) * 0.25", null));
+        JsonObject walk = new JsonObject();
+        walk.addProperty("loop", true);
+        walk.add("bones", boneAnimation(null, "math.sin(query.life_time * 12.0) * 4.0"));
+        JsonObject animations = new JsonObject();
+        animations.add(prefix + ".idle", idle);
+        animations.add(prefix + ".walk", walk);
+        return animations;
+    }
+
+    private static JsonObject boneAnimation(String y, String xRotation) {
+        JsonObject bone = new JsonObject();
+        if (y != null) {
+            JsonArray position = new JsonArray();
+            position.add(0); position.add(y); position.add(0);
+            bone.add("position", position);
+        }
+        if (xRotation != null) {
+            JsonArray rotation = new JsonArray();
+            rotation.add(xRotation); rotation.add(0); rotation.add(0);
+            bone.add("rotation", rotation);
+        }
+        JsonObject bones = new JsonObject();
+        bones.add("bone_0", bone);
+        return bones;
+    }
+
+    private static JsonObject animationFile(JsonObject animations) {
+        JsonObject root = new JsonObject();
+        root.addProperty("format_version", "1.8.0");
+        root.add("animations", animations);
+        return root;
     }
 
     private static AnimationRefs validAnimationRefs(AnimationRefs refs, JsonObject animations) {

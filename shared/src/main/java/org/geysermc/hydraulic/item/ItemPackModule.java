@@ -191,7 +191,6 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             }
             String value = texture.key().value();
             if (contains == null && texture.key().namespace().equals(itemLocation.getNamespace())
-                    && (value.startsWith("item/") || value.startsWith("block/"))
                     && (value.endsWith("/" + itemLocation.getPath()) || value.contains(itemLocation.getPath()))) {
                 contains = texture.key();
             }
