@@ -88,12 +88,13 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 context.report().outcome("entity-native-geometry");
             }
             JsonObject animations = collectAnimations(namespace, path, pack);
-            if (animations.size() == 0 && hitboxFallback) {
-                animations = fallbackAnimations(namespace, path);
+            String animationBone = hitboxFallback ? "bone_0" : rootBone(namespace, path, pack);
+            if (animations.size() == 0 && animationBone != null) {
+                animations = fallbackAnimations(namespace, path, animationBone);
                 pack.addExtraFile(animationFile(animations), "animations/" + namespace + "." + path + ".animation.json");
                 context.logger().warn("Entity {} has no converted animation; using generic idle/walk fallback", key);
                 context.report().fallback("entity-animation");
-                context.report().outcome("entity-generic-animation");
+                context.report().outcome(hitboxFallback ? "entity-generic-animation" : "entity-native-generic-animation");
             } else if (animations.size() > 0) {
                 context.report().outcome("entity-native-animation");
             }
@@ -257,21 +258,21 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         return new AnimationRefs(idle, walk);
     }
 
-    static JsonObject fallbackAnimations(String namespace, String path) {
+    static JsonObject fallbackAnimations(String namespace, String path, String bone) {
         String prefix = "animation." + namespace + "." + path;
         JsonObject idle = new JsonObject();
         idle.addProperty("loop", true);
-        idle.add("bones", boneAnimation("math.sin(query.life_time * 3.0) * 0.25", null));
+        idle.add("bones", boneAnimation(bone, "math.sin(query.life_time * 3.0) * 0.25", null));
         JsonObject walk = new JsonObject();
         walk.addProperty("loop", true);
-        walk.add("bones", boneAnimation(null, "math.sin(query.life_time * 12.0) * 4.0"));
+        walk.add("bones", boneAnimation(bone, null, "math.sin(query.life_time * 12.0) * 4.0"));
         JsonObject animations = new JsonObject();
         animations.add(prefix + ".idle", idle);
         animations.add(prefix + ".walk", walk);
         return animations;
     }
 
-    private static JsonObject boneAnimation(String y, String xRotation) {
+    private static JsonObject boneAnimation(String name, String y, String xRotation) {
         JsonObject bone = new JsonObject();
         if (y != null) {
             JsonArray position = new JsonArray();
@@ -284,8 +285,20 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             bone.add("rotation", rotation);
         }
         JsonObject bones = new JsonObject();
-        bones.add("bone_0", bone);
+        bones.add(name, bone);
         return bones;
+    }
+
+    private static String rootBone(String namespace, String path, BedrockResourcePack pack) {
+        if (pack.entityModels() == null) return null;
+        String prefix = "models/entity/" + namespace + ".";
+        for (Map.Entry<String, ModelEntity> entry : pack.entityModels().entrySet()) {
+            if (!entry.getKey().startsWith(prefix) || geometryIdentifierFor(entry.getValue(), path) == null) continue;
+            for (Geometry geometry : entry.getValue().geometry()) {
+                if (geometry.bones() != null && !geometry.bones().isEmpty()) return geometry.bones().getFirst().name();
+            }
+        }
+        return null;
     }
 
     private static JsonObject animationFile(JsonObject animations) {
