@@ -45,6 +45,7 @@ import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.storage.ModStorage;
 import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.hydraulic.util.BedrockPropertyMapper;
+import org.geysermc.hydraulic.util.GeoUtil;
 import org.geysermc.hydraulic.util.SingletonBlockGetter;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
@@ -77,6 +78,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     private final Map<String, StateDefinition> blockStates = new HashMap<>();
     private final Set<String> emptyModels = new HashSet<>();
     private final Set<Identifier> fallbackBlocks = new HashSet<>();
+    private final Map<String, String> fallbackGeometryIds = new HashMap<>();
 
     public BlockPackModule() {
         this.listenOn(GeyserDefineCustomBlocksEvent.class, this::onDefineCustomBlocks);
@@ -130,6 +132,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             for (BlockState state : block.getStateDefinition().getPossibleStates()) {
                 ModelDefinition definition = getModel(context, blockLocation, state);
                 if (definition == null) {
+                    fallbackGeometryIds.putIfAbsent(fallbackKey(blockLocation, state), fallbackGeometryName(blockLocation, state));
                     continue;
                 }
 
@@ -148,8 +151,10 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 }
 
                 emptyModels.add(key.toString());
+                fallbackGeometryIds.putIfAbsent(fallbackKey(blockLocation, state), fallbackGeometryName(blockLocation, state));
             }
         }
+
     }
 
     private void postProcess(@NotNull PackPostProcessContext<BlockPackModule> context) {
@@ -174,6 +179,17 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         bedrockPack.addFlipbookTexture(id, outputLoc, animationMeta.frameTime());
                     }
                 }
+            }
+        }
+
+        for (Block block : context.registryValues(BuiltInRegistries.BLOCK)) {
+            Identifier blockLocation = BuiltInRegistries.BLOCK.getKey(block);
+            for (BlockState state : block.getStateDefinition().getPossibleStates()) {
+                String geometry = fallbackGeometryIds.get(fallbackKey(blockLocation, state));
+                if (geometry == null) continue;
+                bedrockPack.addBlockModel(
+                        GeoUtil.fromShape(state.getShape(new SingletonBlockGetter(state), BlockPos.ZERO), geometry),
+                        "fallback/" + geometry.substring("geometry.".length()) + ".json");
             }
         }
     }
@@ -217,7 +233,13 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     // A missing or unsupported Java model must remain visible on
                     // Bedrock. The state-specific model still wins when present.
                     if (fallbackBlocks.add(blockLocation)) {
-                        context.logger().warn("Using full-block fallback for {}", blockLocation);
+                        context.logger().warn("Using VoxelShape fallback for {}", blockLocation);
+                    }
+                    CustomBlockComponents.Builder fallback = fallbackComponents(blockLocation, state);
+                    if (state.getProperties().isEmpty()) {
+                        baseComponentBuilder = fallback;
+                    } else {
+                        permutations.add(new CustomBlockPermutation(fallback.build(), stateCondition(state)));
                     }
                     continue;
                 }
@@ -250,9 +272,9 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         // missing one. Keep the block visible and let its normal
                         // material bindings supply the converted texture.
                         if (fallbackBlocks.add(blockLocation)) {
-                            context.logger().warn("Using full-block fallback for empty model {}", blockLocation);
-                        }
-                        geoName = "minecraft:geometry.full_block";
+                        context.logger().warn("Using VoxelShape fallback for empty model {}", blockLocation);
+                    }
+                        geoName = fallbackGeometryId(blockLocation, state);
                     }
 
                     componentsBuilder.geometry(GeometryComponent.builder()
@@ -283,7 +305,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
                 Materials materials = context.storage().materials();
                 Materials.Material material = materials.material(key.toString());
-                if (material != null) {
+                if (material != null && !material.textures().isEmpty()) {
                     // Add a default texture, can be replaced by the below (I think)
                     Map.Entry<String, String> firstEntry = material.textures().entrySet().iterator().next();
 
@@ -328,13 +350,14 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         }
                     }
                 } else {
+                    String fallbackTexture = fallbackTexture(model, key);
                     componentsBuilder.materialInstance("*", MaterialInstance.builder()
-                            .texture(PackUtil.getTextureName(key.toString()))
+                            .texture(fallbackTexture)
                             .renderMethod(renderMethod)
                             .faceDimming(true)
                             .ambientOcclusion(model.ambientOcclusion())
                             .build());
-                    context.logger().warn("Could not find material for block {}", key);
+                    context.logger().warn("Using resolved texture fallback for block {}", key);
                 }
 
                 // No properties exist on this state, so there's only one
@@ -346,21 +369,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     continue;
                 }
 
-                List<String> conditions = new ArrayList<>();
-                for (Property<?> property : state.getProperties()) {
-                    String propValue = state.getValue(property).toString();
-                    if (property instanceof IntegerProperty intProperty) {
-                        propValue = Integer.toString(BedrockPropertyMapper.value(new ArrayList<>(intProperty.getPossibleValues()), state.getValue(intProperty)));
-                    }
-                    if (property instanceof EnumProperty<?>) {
-                        propValue = "'" + propValue.toLowerCase() + "'";
-                    }
-
-                    conditions.add(String.format(STATE_CONDITION, property.getName(), propValue));
-                }
-
-                String condition = String.join(" && ", conditions);
-                permutations.add(new CustomBlockPermutation(componentsBuilder.build(), condition));
+                permutations.add(new CustomBlockPermutation(componentsBuilder.build(), stateCondition(state)));
             }
 
             builder.permutations(permutations);
@@ -449,12 +458,12 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         return result;
     }
 
-    private static CustomBlockComponents.Builder fallbackComponents(Identifier blockLocation, BlockState state) {
+    private CustomBlockComponents.Builder fallbackComponents(Identifier blockLocation, BlockState state) {
         String texture = PackUtil.getTextureName(blockLocation.getNamespace() + ":block/" + blockLocation.getPath());
         VoxelShape shape = state.getShape(new SingletonBlockGetter(state), BlockPos.ZERO);
         VoxelShape collisionShape = state.getCollisionShape(new SingletonBlockGetter(state), BlockPos.ZERO);
         return CustomBlockComponents.builder()
-                .geometry(GeometryComponent.builder().identifier("minecraft:geometry.full_block").build())
+                .geometry(GeometryComponent.builder().identifier(fallbackGeometryId(blockLocation, state)).build())
                 .materialInstance("*", MaterialInstance.builder()
                         .texture(texture)
                         .renderMethod(state.canOcclude() ? "opaque" : "blend")
@@ -463,6 +472,34 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         .build())
                 .selectionBox(createBoxComponent(shape))
                 .collisionBox(createBoxComponent(collisionShape));
+    }
+
+    private String fallbackGeometryId(Identifier blockLocation, BlockState state) {
+        return fallbackGeometryIds.getOrDefault(fallbackKey(blockLocation, state), "minecraft:geometry.full_block");
+    }
+
+    private static String stateCondition(BlockState state) {
+        List<String> conditions = new ArrayList<>();
+        for (Property<?> property : state.getProperties()) {
+            String propValue = state.getValue(property).toString();
+            if (property instanceof IntegerProperty intProperty) {
+                propValue = Integer.toString(BedrockPropertyMapper.value(new ArrayList<>(intProperty.getPossibleValues()), state.getValue(intProperty)));
+            }
+            if (property instanceof EnumProperty<?>) {
+                propValue = "'" + propValue.toLowerCase() + "'";
+            }
+            conditions.add(String.format(STATE_CONDITION, property.getName(), propValue));
+        }
+        return String.join(" && ", conditions);
+    }
+
+    private static String fallbackKey(Identifier blockLocation, BlockState state) {
+        return blockLocation + "|" + stableStateKey(state);
+    }
+
+    private static String fallbackGeometryName(Identifier blockLocation, BlockState state) {
+        return "geometry.hydraulic.fallback." + blockLocation.getNamespace() + "." + blockLocation.getPath()
+                + "." + Integer.toUnsignedString(stableStateKey(state).hashCode(), 36);
     }
 
     @Nullable
@@ -618,6 +655,17 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     @Nullable
     private static ModelTexture getModelTexture(@NotNull Map<String, ModelTexture> textures, @NotNull String key) {
         return getModelTexture(textures, key, new HashSet<>());
+    }
+
+    private static String fallbackTexture(Model model, Key modelKey) {
+        Map<String, ModelTexture> textures = getTextures(model.textures());
+        for (String name : textures.keySet()) {
+            ModelTexture texture = getModelTexture(textures, name);
+            if (texture != null && texture.key() != null) {
+                return PackUtil.getTextureName(texture.key().toString());
+            }
+        }
+        return PackUtil.getTextureName(modelKey.toString());
     }
 
     @Nullable

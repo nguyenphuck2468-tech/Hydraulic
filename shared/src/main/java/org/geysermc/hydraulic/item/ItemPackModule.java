@@ -183,12 +183,19 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     private static Key findFallbackTexture(ResourcePack assets, Identifier itemLocation) {
         Key itemTexture = Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath());
         Key blockTexture = Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath());
+        Key contains = null;
         for (var texture : assets.textures()) {
             if (texture.key().equals(itemTexture) || texture.key().equals(blockTexture)) {
                 return texture.key();
             }
+            String value = texture.key().value();
+            if (contains == null && texture.key().namespace().equals(itemLocation.getNamespace())
+                    && (value.startsWith("item/") || value.startsWith("block/"))
+                    && (value.endsWith("/" + itemLocation.getPath()) || value.contains(itemLocation.getPath()))) {
+                contains = texture.key();
+            }
         }
-        return null;
+        return contains;
     }
 
     @Override
