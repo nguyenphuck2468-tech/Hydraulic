@@ -25,8 +25,11 @@ public final class PackArchiveValidator {
     public static Result validate(Path archive) throws IOException {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
-        List<EntityTexture> entityTextures = new ArrayList<>();
+        List<EntityReferences> entityReferences = new ArrayList<>();
         Set<String> filesByPath = new HashSet<>();
+        Set<String> geometries = new HashSet<>();
+        Set<String> animations = new HashSet<>();
+        Set<String> animationControllers = new HashSet<>();
         int files = 0;
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             if (zip.getEntry("manifest.json") == null) errors.add("missing manifest.json");
@@ -43,8 +46,8 @@ public final class PackArchiveValidator {
                 if (entry.getName().endsWith(".json")) {
                     try (InputStreamReader reader = new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8)) {
                         JsonElement parsed = JsonParser.parseReader(reader);
-                        if (entry.getName().startsWith("entity/") && parsed.isJsonObject()) {
-                            collectEntityTextures(entry.getName(), parsed.getAsJsonObject(), entityTextures);
+                        if (parsed.isJsonObject()) {
+                            collectReferences(entry.getName(), parsed.getAsJsonObject(), entityReferences, geometries, animations, animationControllers);
                         }
                     } catch (RuntimeException exception) {
                         errors.add("invalid JSON " + entry.getName());
@@ -52,25 +55,60 @@ public final class PackArchiveValidator {
                 }
             }
         }
-        for (EntityTexture texture : entityTextures) {
-            if (!filesByPath.contains(texture.path() + ".png") && !filesByPath.contains(texture.path() + ".tga")) {
-                warnings.add("missing entity texture " + texture.entity() + " -> " + texture.path());
+        for (EntityReferences entity : entityReferences) {
+            for (String texture : entity.textures()) {
+                if (!filesByPath.contains(texture + ".png") && !filesByPath.contains(texture + ".tga")) {
+                    warnings.add("missing entity texture " + entity.file() + " -> " + texture);
+                }
+            }
+            for (String geometry : entity.geometries()) {
+                if (geometry.startsWith("geometry." + entity.namespace() + ".") && !geometries.contains(geometry)) {
+                    warnings.add("missing entity geometry " + entity.file() + " -> " + geometry);
+                }
+            }
+            for (String animation : entity.animations()) {
+                if (animation.startsWith("animation." + entity.namespace() + ".") && !animations.contains(animation)) {
+                    warnings.add("missing entity animation " + entity.file() + " -> " + animation);
+                }
+            }
+            for (String controller : entity.animationControllers()) {
+                if (controller.startsWith("controller.animation." + entity.namespace() + ".") && !animationControllers.contains(controller)) {
+                    warnings.add("missing animation controller " + entity.file() + " -> " + controller);
+                }
             }
         }
         return new Result(files, List.copyOf(errors), List.copyOf(warnings));
     }
 
-    private static void collectEntityTextures(String entity, JsonObject root, List<EntityTexture> textures) {
+    private static void collectReferences(String file, JsonObject root, List<EntityReferences> entities, Set<String> geometries,
+                                          Set<String> animations, Set<String> animationControllers) {
+        if (file.startsWith("entity/")) {
+            collectEntityReferences(file, root, entities);
+        } else if (file.startsWith("models/entity/")) {
+            JsonElement declared = root.get("minecraft:geometry");
+            if (declared != null && declared.isJsonArray()) {
+                for (JsonElement geometry : declared.getAsJsonArray()) {
+                    JsonObject description = geometry.isJsonObject() ? object(geometry.getAsJsonObject(), "description") : null;
+                    string(description, "identifier", geometries);
+                }
+            }
+        } else if (file.startsWith("animations/")) {
+            strings(object(root, "animations"), animations);
+        } else if (file.startsWith("animation_controllers/")) {
+            strings(object(root, "animation_controllers"), animationControllers);
+        }
+    }
+
+    private static void collectEntityReferences(String file, JsonObject root, List<EntityReferences> entities) {
         JsonObject clientEntity = object(root, "minecraft:client_entity");
         JsonObject description = object(clientEntity, "description");
-        JsonObject declared = object(description, "textures");
-        if (declared == null) return;
-        for (JsonElement value : declared.asMap().values()) {
-            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
-                String path = value.getAsString();
-                if (path.startsWith("textures/")) textures.add(new EntityTexture(entity, path));
-            }
-        }
+        if (description == null) return;
+        String identifier = string(description, "identifier");
+        if (identifier == null || !identifier.contains(":")) return;
+        List<String> textures = values(object(description, "textures"), "textures/");
+        entities.add(new EntityReferences(file, identifier.substring(0, identifier.indexOf(':')), textures,
+                values(object(description, "geometry"), null), values(object(description, "animations"), null),
+                arrayValues(description.get("animation_controllers"))));
     }
 
     private static JsonObject object(JsonObject parent, String name) {
@@ -78,7 +116,43 @@ public final class PackArchiveValidator {
         return parent.getAsJsonObject(name);
     }
 
-    private record EntityTexture(String entity, String path) {
+    private static void strings(JsonObject object, Set<String> values) {
+        if (object == null) return;
+        values.addAll(object.keySet());
+    }
+
+    private static void string(JsonObject object, String name, Set<String> values) {
+        String value = string(object, name);
+        if (value != null) values.add(value);
+    }
+
+    private static String string(JsonObject object, String name) {
+        if (object == null || !object.has(name) || !object.get(name).isJsonPrimitive()) return null;
+        return object.get(name).getAsString();
+    }
+
+    private static List<String> values(JsonObject object, String prefix) {
+        if (object == null) return List.of();
+        List<String> values = new ArrayList<>();
+        for (JsonElement value : object.asMap().values()) {
+            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) continue;
+            String string = value.getAsString();
+            if (prefix == null || string.startsWith(prefix)) values.add(string);
+        }
+        return values;
+    }
+
+    private static List<String> arrayValues(JsonElement array) {
+        if (array == null || !array.isJsonArray()) return List.of();
+        List<String> values = new ArrayList<>();
+        for (JsonElement value : array.getAsJsonArray()) {
+            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) values.add(value.getAsString());
+        }
+        return values;
+    }
+
+    private record EntityReferences(String file, String namespace, List<String> textures, List<String> geometries,
+                                    List<String> animations, List<String> animationControllers) {
     }
 
     public record Result(int files, List<String> errors, List<String> warnings) {

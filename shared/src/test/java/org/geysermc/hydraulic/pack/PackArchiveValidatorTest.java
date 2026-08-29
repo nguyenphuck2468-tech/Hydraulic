@@ -53,13 +53,16 @@ class PackArchiveValidatorTest {
         try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
             entry(zip, "manifest.json", "{}");
             entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
-            entry(zip, "entity/example.mob.entity.json", "{\"minecraft:client_entity\":{\"description\":{\"textures\":{\"default\":\"textures/entity/example/mob\"}}}}");
+            entry(zip, "entity/example.mob.entity.json", "{\"minecraft:client_entity\":{\"description\":{\"identifier\":\"example:mob\",\"textures\":{\"default\":\"textures/entity/example/mob\"},\"geometry\":{\"default\":\"geometry.example.missing\"},\"animations\":{\"idle\":\"animation.example.missing\"},\"animation_controllers\":[\"controller.animation.example.missing\"]}}}");
         }
 
         PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
 
         assertTrue(result.valid());
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity texture")));
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity geometry")));
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity animation")));
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing animation controller")));
     }
 
     @Test
