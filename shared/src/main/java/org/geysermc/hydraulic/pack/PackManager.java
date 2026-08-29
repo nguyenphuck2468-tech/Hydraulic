@@ -59,7 +59,7 @@ public class PackManager {
      * Increment when the generated Bedrock-pack contract changes. This keeps
      * cached packs from surviving a Hydraulic update that changes conversion.
      */
-    public static final String PACK_GENERATION_REVISION = "10";
+    public static final String PACK_GENERATION_REVISION = "11";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -198,6 +198,7 @@ public class PackManager {
         int blockCount = this.modsToBlocks.get(mod.id()).size();
         int itemCount = this.modsToItems.get(mod.id()).size();
         int entityCount = this.modsToEntities.get(mod.id()).size();
+        ConversionReport report = new ConversionReport();
         LOGGER.info("Converting {} [blocks={}, items={}, entities={}, roots={}]", mod.id(), blockCount, itemCount, entityCount, mod.roots().size());
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
         pipelines.add(AssetConverters.create(new MetadataPackModule(mod)));
@@ -223,7 +224,7 @@ public class PackManager {
             bedrockPack.addExtraFile(generationMarker, PACK_GENERATION_MARKER);
 
             for (PackModule<?> module : this.modules) {
-                PackPostProcessContext context = new PackPostProcessContext(this.hydraulic, mod, module, converter, javaPack, bedrockPack, packPath, modelProvider);
+                PackPostProcessContext context = new PackPostProcessContext(this.hydraulic, mod, module, converter, javaPack, bedrockPack, packPath, modelProvider, report);
                 if (!module.test(context)) {
                     continue;
                 }
@@ -255,11 +256,26 @@ public class PackManager {
         boolean created = Files.isRegularFile(packPath);
         if (created) {
             try {
-                LOGGER.info("Converted {} in {} ms -> {} bytes [fingerprint={}]", mod.id(),
-                        (System.nanoTime() - startedAt) / 1_000_000, Files.size(packPath), fingerprint);
-            } catch (IOException ignored) {
-                LOGGER.info("Converted {} in {} ms [fingerprint={}]", mod.id(),
-                        (System.nanoTime() - startedAt) / 1_000_000, fingerprint);
+                PackArchiveValidator.Result validation = PackArchiveValidator.validate(packPath);
+                if (!validation.valid()) {
+                    Files.deleteIfExists(packPath);
+                    LOGGER.error("Discarded invalid pack for {}: {}", mod.id(), validation.errors());
+                    return false;
+                }
+                if (!validation.warnings().isEmpty()) {
+                    LOGGER.warn("Pack validation warnings for {}: {}", mod.id(), validation.warnings());
+                }
+                LOGGER.info("Conversion report {} [blocks={}, items={}, entities={}, fallback={}, files={}, {} ms, {} bytes]", mod.id(),
+                        blockCount, itemCount, entityCount, report.fallbackSummary(), validation.files(),
+                        (System.nanoTime() - startedAt) / 1_000_000, Files.size(packPath));
+            } catch (IOException exception) {
+                try {
+                    Files.deleteIfExists(packPath);
+                } catch (IOException deleteException) {
+                    exception.addSuppressed(deleteException);
+                }
+                LOGGER.error("Discarded unreadable pack for {}", mod.id(), exception);
+                return false;
             }
         }
         return created;

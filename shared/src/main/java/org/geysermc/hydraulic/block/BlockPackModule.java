@@ -192,6 +192,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 bedrockPack.addBlockModel(
                         GeoUtil.fromShape(state.getShape(new SingletonBlockGetter(state), BlockPos.ZERO), geometry),
                         fallbackGeometryPath(geometry));
+                context.report().fallback("block-shape");
             }
         }
     }
@@ -571,7 +572,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         continue;
                     }
 
-                    boolean test = matchesStateValue(state.getValue(foundProperty).toString(), match.value().toString());
+                    boolean test = matchesStateValue(serializedStateValue(state, foundProperty), match.value().toString());
                     if (!first) {
                         result = comparator.apply(result, test);
                     } else {
@@ -620,7 +621,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
     private static String stableStateKey(BlockState state) {
         return state.getProperties().stream()
-                .map(property -> property.getName() + "=" + state.getValue(property))
+                .map(property -> property.getName() + "=" + serializedStateValue(state, property))
                 .sorted()
                 .collect(java.util.stream.Collectors.joining(","));
     }
@@ -628,7 +629,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     private static MultiVariant matchState(@NotNull BlockState state, @NotNull Map<String, MultiVariant> variants) {
         List<String> properties = new ArrayList<>();
         for (Property<?> property : state.getProperties()) {
-            properties.add(property.getName() + "=" + state.getValue(property).toString().toLowerCase());
+            properties.add(property.getName() + "=" + serializedStateValue(state, property));
         }
 
         MultiVariant bestMatch = null;
@@ -661,6 +662,13 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             }
         }
         return false;
+    }
+
+    private static String serializedStateValue(BlockState state, Property<?> property) {
+        Object value = state.getValue(property);
+        return value instanceof StringRepresentable representable
+                ? representable.getSerializedName()
+                : value.toString().toLowerCase(java.util.Locale.ROOT);
     }
 
     @Nullable

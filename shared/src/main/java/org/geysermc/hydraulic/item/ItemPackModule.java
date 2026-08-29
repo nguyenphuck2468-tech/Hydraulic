@@ -159,6 +159,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 }
                 bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallbackTexture).replace(".png", ""));
                 context.logger().warn("Item {} has no item model; using texture fallback", itemLocation);
+                context.report().fallback("item-texture");
                 continue;
             }
 

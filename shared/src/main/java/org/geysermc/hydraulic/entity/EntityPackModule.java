@@ -77,7 +77,11 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 continue;
             }
 
-            addHitboxGeometry(namespace, path, type.getDimensions(), pack);
+            if (!hasNativeGeometry(namespace, path, pack)) {
+                addHitboxGeometry(namespace, path, type.getDimensions(), pack);
+                context.logger().warn("Entity {} has no converted geometry; using hitbox fallback without custom animation", key);
+                context.report().fallback("entity-hitbox");
+            }
             JsonObject animations = collectAnimations(namespace, path, pack);
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
@@ -384,6 +388,20 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             return "geometry.cow";
         }
         return "geometry.humanoid.custom";
+    }
+
+    private static boolean hasNativeGeometry(String namespace, String path, BedrockResourcePack pack) {
+        if (pack.entityModels() == null) return false;
+        String prefix = "models/entity/" + namespace + ".";
+        for (Map.Entry<String, ModelEntity> entry : pack.entityModels().entrySet()) {
+            String location = entry.getKey();
+            if (!location.startsWith(prefix) || !location.endsWith(".json")) continue;
+            String base = location.substring(prefix.length(), location.length() - ".json".length());
+            if (base.equals(path) || base.startsWith(path + "_") || geometryIdentifierFor(entry.getValue(), path) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -1,6 +1,7 @@
 package org.geysermc.hydraulic.pack.context;
 
 import org.geysermc.hydraulic.HydraulicImpl;
+import org.geysermc.hydraulic.pack.ConversionReport;
 import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
@@ -23,6 +24,7 @@ public class PackPostProcessContext<T extends PackModule<T>> extends PackContext
     private final BedrockResourcePack bedrockPack;
     private final Path path;
     private final ModelStitcher.Provider modelProvider;
+    private final ConversionReport report;
 
     public PackPostProcessContext(
         @NotNull HydraulicImpl hydraulic,
@@ -32,7 +34,8 @@ public class PackPostProcessContext<T extends PackModule<T>> extends PackContext
         @NotNull ResourcePack javaPack,
         @NotNull BedrockResourcePack bedrockPack,
         @NotNull Path path,
-        @NotNull ModelStitcher.Provider modelProvider
+        @NotNull ModelStitcher.Provider modelProvider,
+        @NotNull ConversionReport report
     ) {
         super(hydraulic, mod, module);
 
@@ -41,6 +44,7 @@ public class PackPostProcessContext<T extends PackModule<T>> extends PackContext
         this.bedrockPack = bedrockPack;
         this.path = path;
         this.modelProvider = modelProvider;
+        this.report = report;
     }
 
     /**
@@ -86,5 +90,10 @@ public class PackPostProcessContext<T extends PackModule<T>> extends PackContext
     @NotNull
     public ModelStitcher.Provider modelProvider() {
         return modelProvider;
+    }
+
+    @NotNull
+    public ConversionReport report() {
+        return report;
     }
 }
