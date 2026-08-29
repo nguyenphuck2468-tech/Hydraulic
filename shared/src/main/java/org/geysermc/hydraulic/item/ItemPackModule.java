@@ -33,9 +33,14 @@ import team.unnamed.creative.model.Model;
 import team.unnamed.creative.model.ModelTexture;
 
 import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @AutoService(PackModule.class)
 public class ItemPackModule extends TexturePackModule<ItemPackModule> {
+    private static final Pattern RAW_TEXTURE = Pattern.compile("(?:[a-z0-9_.-]+:)?(?:item|block|gui)/[a-z0-9_./-]+");
     private final List<Identifier> itemsWith2dIcon = new ArrayList<>();
     private final List<Identifier> handheldItems = new ArrayList<>();
     private final Map<String, String> itemBuiltinTexture = new HashMap<>();
@@ -153,6 +158,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             }
             if (baseModel == null) {
                 Key fallbackTexture = findFallbackTexture(assets, itemLocation);
+                if (fallbackTexture == null) fallbackTexture = findRawTexture(context, assets, itemLocation);
                 if (fallbackTexture == null) {
                     context.logger().warn("Item {} has no item model or texture, skipping", itemLocation);
                     context.report().outcome("item-unresolved");
@@ -162,6 +168,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 context.logger().warn("Item {} has no item model; using texture fallback", itemLocation);
                 context.report().fallback("item-texture");
                 context.report().outcome("item-texture-fallback");
+                context.report().outcome("item-raw-renderer-fallback");
                 continue;
             }
 
@@ -199,6 +206,22 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             }
         }
         return contains;
+    }
+
+    private static Key findRawTexture(PackPostProcessContext<?> context, ResourcePack assets, Identifier item) {
+        var file = context.mod().resolveFile("assets/" + item.getNamespace() + "/items/" + item.getPath() + ".json");
+        if (file == null) return null;
+        try {
+            Matcher matcher = RAW_TEXTURE.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            while (matcher.find()) {
+                String value = matcher.group();
+                Key key = value.indexOf(':') >= 0 ? Key.key(value) : Key.key(item.getNamespace(), value);
+                for (var texture : assets.textures()) if (texture.key().equals(key)) return key;
+            }
+        } catch (Exception ignored) {
+            // A malformed raw item file is reported by Minecraft; it must not stop pack conversion.
+        }
+        return null;
     }
 
     @Override
