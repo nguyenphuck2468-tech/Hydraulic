@@ -13,6 +13,7 @@ import net.minecraft.world.phys.shapes.Shapes;
 import org.geysermc.hydraulic.Constants;
 import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
+import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.hydraulic.util.GeoUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
@@ -22,6 +23,7 @@ import org.jetbrains.annotations.NotNull;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -64,6 +66,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         BedrockResourcePack pack = context.bedrockResourcePack();
         loadAnimationMappings(context);
         List<TextureAsset> textures = textureAssets(pack);
+        List<SourceTextureAsset> sourceTextures = sourceTextureAssets(context.mod());
 
         for (EntityType<?> type : context.entityTypes()) {
             Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
@@ -73,16 +76,26 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             String path = key.getPath();
             TextureMatch texture = findTexture(path, textures);
             if (texture == null) {
+                texture = recoverSourceTexture(path, sourceTextures, pack);
+            }
+            if (texture == null) {
                 context.logger().warn("Skipping custom Bedrock entity {}: no converted texture", key);
                 context.report().outcome("entity-missing-texture", key.toString());
                 continue;
             }
-            if (texture.fallback()) {
+            if (texture.source() != null) {
+                context.logger().warn("Entity {} has no converted texture; recovered source texture {}", key, texture.source());
+                context.report().fallback("entity-source-texture");
+                context.report().outcome("entity-source-texture-recovery", key.toString());
+                context.report().resolution("entity-source-texture-recovery", key.toString(), texture.source());
+            } else if (texture.fallback()) {
                 context.logger().warn("Entity {} has no exact texture; using related texture {}", key, texture.path());
                 context.report().fallback("entity-texture");
                 context.report().outcome("entity-texture-fallback", key.toString());
+                context.report().resolution("entity-texture-fallback", key.toString(), texture.path());
+            } else {
+                context.report().resolution("entity-texture", key.toString(), texture.path());
             }
-            context.report().resolution(texture.fallback() ? "entity-texture-fallback" : "entity-texture", key.toString(), texture.path());
 
             boolean hitboxFallback = !hasNativeGeometry(namespace, path, pack);
             if (hitboxFallback) {
@@ -557,12 +570,46 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         return new TextureAsset(relative.substring(0, relative.lastIndexOf('.')), name.substring(0, extension));
     }
 
+    /**
+     * Finds source images that PackConverter did not carry across. The files
+     * are indexed once per mod and only used after every converted texture
+     * lookup has failed, so converter output always remains authoritative.
+     */
+    private static List<SourceTextureAsset> sourceTextureAssets(ModInfo mod) {
+        List<SourceTextureAsset> textures = new ArrayList<>();
+        for (Path root : mod.roots()) {
+            Path sourceRoot = root.resolve("assets").resolve(mod.namespace()).resolve("textures");
+            if (!Files.isDirectory(sourceRoot)) continue;
+            try (Stream<Path> candidates = Files.walk(sourceRoot)) {
+                candidates.filter(Files::isRegularFile)
+                        .map(candidate -> sourceTextureAsset(mod.namespace(), sourceRoot, candidate))
+                        .filter(java.util.Objects::nonNull)
+                        .forEach(textures::add);
+            } catch (Exception ignored) {
+                // A single unreadable mod root should not stop its other assets.
+            }
+        }
+        return textures.stream().sorted(Comparator.comparing(SourceTextureAsset::outputPath)).toList();
+    }
+
+    private static SourceTextureAsset sourceTextureAsset(String namespace, Path sourceRoot, Path candidate) {
+        String name = candidate.getFileName().toString();
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".png") && !lower.endsWith(".tga")) return null;
+
+        int extension = name.lastIndexOf('.');
+        String relative = sourceRoot.relativize(candidate).toString().replace('\\', '/');
+        String outputFile = "textures/" + relative;
+        return new SourceTextureAsset(candidate, outputFile, outputFile.substring(0, outputFile.lastIndexOf('.')),
+                name.substring(0, extension), "assets/" + namespace + "/textures/" + relative);
+    }
+
     private static TextureMatch findTexture(String path, List<TextureAsset> textures) {
         TextureAsset best = null;
         int bestScore = 0;
         for (TextureAsset texture : textures) {
             if (texture.name().equals(path)) {
-                return new TextureMatch(texture.path(), false);
+                return new TextureMatch(texture.path(), false, null);
             }
             // A fuzzy match must stay in entity assets. A matching item or
             // armor name is usually a different visual asset.
@@ -573,7 +620,34 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 bestScore = score;
             }
         }
-        return best == null ? null : new TextureMatch(best.path(), true);
+        return best == null ? null : new TextureMatch(best.path(), true, null);
+    }
+
+    private static TextureMatch recoverSourceTexture(String path, List<SourceTextureAsset> textures, BedrockResourcePack pack) {
+        SourceTextureAsset best = null;
+        int bestScore = 0;
+        for (SourceTextureAsset texture : textures) {
+            if (texture.name().equals(path)) {
+                best = texture;
+                break;
+            }
+            if (!texture.outputPath().startsWith("textures/entity/")) continue;
+            int score = textureScore(path, texture.outputPath());
+            if (score > bestScore) {
+                best = texture;
+                bestScore = score;
+            }
+        }
+        if (best == null) return null;
+
+        try {
+            Path destination = pack.directory().resolve(best.outputFile());
+            Files.createDirectories(destination.getParent());
+            Files.copy(best.source(), destination, StandardCopyOption.REPLACE_EXISTING);
+            return new TextureMatch(best.outputPath(), true, best.description());
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static int textureScore(String entityPath, String texturePath) {
@@ -614,10 +688,13 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         return root;
     }
 
-    private record TextureMatch(String path, boolean fallback) {
+    private record TextureMatch(String path, boolean fallback, String source) {
     }
 
     private record TextureAsset(String path, String name) {
+    }
+
+    private record SourceTextureAsset(Path source, String outputFile, String outputPath, String name, String description) {
     }
 
     /**
