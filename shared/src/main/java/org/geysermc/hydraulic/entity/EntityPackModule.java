@@ -71,11 +71,16 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
             String namespace = key.getNamespace();
             String path = key.getPath();
-            String texture = findTexture(namespace, path, pack);
+            TextureMatch texture = findTexture(namespace, path, pack);
             if (texture == null) {
                 context.logger().warn("Skipping custom Bedrock entity {}: no converted texture", key);
                 context.report().outcome("entity-missing-texture", key.toString());
                 continue;
+            }
+            if (texture.fallback()) {
+                context.logger().warn("Entity {} has no exact texture; using related texture {}", key, texture.path());
+                context.report().fallback("entity-texture");
+                context.report().outcome("entity-texture-fallback", key.toString());
             }
 
             boolean hitboxFallback = !hasNativeGeometry(namespace, path, pack);
@@ -101,7 +106,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
             pack.addExtraFile(
-                    clientEntity(namespace, path, type.getDimensions(), texture, animations, refs, pack),
+                    clientEntity(namespace, path, type.getDimensions(), texture.path(), animations, refs, pack),
                     "entity/" + namespace + "." + path + ".entity.json");
             pack.addExtraFile(
                     renderController(namespace, path),
@@ -109,7 +114,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             if (refs != null) {
                 pack.addExtraFile(
                         animationController(namespace, path, refs),
-                        "animation_controllers/" + namespace + "." + path + ".animation_controllers.json");
+                        animationControllerFile(namespace, path));
             }
             EntityEventRegistrar.markPackBacked(key.toString());
         }
@@ -218,6 +223,10 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
     private static String controllerName(String namespace, String path) {
         return "controller.animation." + namespace + "." + path + ".move";
+    }
+
+    static String animationControllerFile(String namespace, String path) {
+        return "animation_controllers/" + namespace + "." + path + ".ac.json";
     }
 
     /**
@@ -462,7 +471,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             String location = entry.getKey();
             if (!location.startsWith(prefix) || !location.endsWith(".json")) continue;
             String base = location.substring(prefix.length(), location.length() - ".json".length());
-            if (base.equals(path) || base.startsWith(path + "_") || geometryIdentifierFor(entry.getValue(), path) != null) {
+            // A sibling variant such as `void_worm_shot` is not the default
+            // geometry for `void_worm`; it remains a variant in the entity JSON.
+            if (base.equals(path) || geometryIdentifierFor(entry.getValue(), path) != null) {
                 return true;
             }
         }
@@ -483,10 +494,17 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         }
 
         float halfWidth = dimensions.width() / 2f;
-        // ponytail: one cuboid is intentionally the generic ceiling; add a
-        // framework parser only when a real model cannot be extracted.
-        pack.addEntityModel(GeoUtil.fromShape(
-                Shapes.box(-halfWidth, 0, -halfWidth, halfWidth, dimensions.height(), halfWidth),
+        float bodyHeight = dimensions.height();
+        var shape = Shapes.box(-halfWidth, 0, -halfWidth, halfWidth, bodyHeight, halfWidth);
+        if (dimensions.height() > dimensions.width() * 1.4f) {
+            bodyHeight *= 0.7f;
+            shape = Shapes.or(
+                    Shapes.box(-halfWidth, 0, -halfWidth, halfWidth, bodyHeight, halfWidth),
+                    Shapes.box(-halfWidth * 0.7f, bodyHeight, -halfWidth * 0.7f, halfWidth * 0.7f, dimensions.height(), halfWidth * 0.7f));
+        }
+        // ponytail: this is deliberately an adaptive silhouette, not a fake
+        // model parser; use a converted geometry whenever one exists.
+        pack.addEntityModel(GeoUtil.fromShape(shape,
                 "geometry." + namespace + "." + path), fileName);
     }
 
@@ -511,17 +529,18 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * converted entity textures for a file named after (or containing) the
      * entity name, since mods lay out texture folders in many ways.
      */
-    private String findTexture(String namespace, String path, BedrockResourcePack pack) {
+    private TextureMatch findTexture(String namespace, String path, BedrockResourcePack pack) {
         try {
-            Path entityTextures = pack.directory().resolve("textures/entity");
-            if (!Files.isDirectory(entityTextures)) {
+            Path textures = pack.directory().resolve("textures");
+            if (!Files.isDirectory(textures)) {
                 return null;
             }
 
             String exact = path + ".png";
             String exactTga = path + ".tga";
-            String contains = null;
-            try (Stream<Path> candidates = Files.walk(entityTextures)) {
+            String best = null;
+            int bestScore = 0;
+            try (Stream<Path> candidates = Files.walk(textures)) {
                 for (Path candidate : (Iterable<Path>) candidates::iterator) {
                     if (!Files.isRegularFile(candidate)) continue;
 
@@ -536,17 +555,34 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                     }
 
                     if (name.equals(exact) || name.equals(exactTga)) {
-                        return relative;
+                        return new TextureMatch(relative, false);
                     }
-                    if (contains == null && (name.contains(path) || relative.contains("/" + path))) {
-                        contains = relative;
+                    int score = textureScore(path, relative);
+                    if (score > bestScore) {
+                        best = relative;
+                        bestScore = score;
                     }
                 }
             }
-            return contains;
+            return best == null ? null : new TextureMatch(best, true);
         } catch (IOException e) {
             return null;
         }
+    }
+
+    private static int textureScore(String entityPath, String texturePath) {
+        String lower = texturePath.toLowerCase(Locale.ROOT);
+        if (lower.contains("/" + entityPath)) {
+            return 1_000;
+        }
+
+        int score = 0;
+        for (String token : entityPath.split("_")) {
+            if (token.length() >= 4 && lower.contains(token)) {
+                score += token.length();
+            }
+        }
+        return score;
     }
 
     private JsonObject renderController(String namespace, String path) {
@@ -570,6 +606,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         root.addProperty("format_version", "1.10.0");
         root.add("render_controllers", controllers);
         return root;
+    }
+
+    private record TextureMatch(String path, boolean fallback) {
     }
 
     /**

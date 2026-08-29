@@ -157,21 +157,16 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 baseModel = assets.model(Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath()));
             }
             if (baseModel == null) {
-                Key fallbackTexture = findFallbackTexture(assets, itemLocation);
-                boolean rawRendererFallback = false;
-                if (fallbackTexture == null) {
-                    fallbackTexture = findRawTexture(context, assets, itemLocation);
-                    rawRendererFallback = fallbackTexture != null;
-                }
-                if (fallbackTexture == null) {
+                TextureFallback fallback = findFallbackTexture(context, assets, itemLocation);
+                if (fallback == null) {
                     context.logger().warn("Item {} has no item model or texture, skipping", itemLocation);
                     context.report().outcome("item-unresolved", itemLocation.toString());
                     continue;
                 }
-                bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallbackTexture).replace(".png", ""));
+                bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallback.key()).replace(".png", ""));
                 context.logger().warn("Item {} has no item model; using texture fallback", itemLocation);
                 context.report().fallback("item-texture");
-                context.report().outcome(rawRendererFallback ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString());
+                context.report().outcome(fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString());
                 continue;
             }
 
@@ -179,11 +174,20 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
 
             List<ModelTexture> layers = model.textures().layers();
             if (layers == null || layers.isEmpty()) {
-                // Don't warn if a block as they can use the block model
-                if (!(item instanceof BlockItem)) {
-                    context.logger().warn("Item {} has no layer0 texture, skipping", itemLocation);
+                TextureFallback fallback = findFallbackTexture(context, assets, itemLocation);
+                if (fallback != null) {
+                    bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallback.key()).replace(".png", ""));
+                    context.logger().warn("Item {} has no layer0 texture; using texture fallback", itemLocation);
+                    context.report().fallback("item-texture");
+                    context.report().outcome(fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString());
+                } else {
+                    // Block items can intentionally use block geometry, but they
+                    // still need an outcome so coverage reports remain complete.
+                    if (!(item instanceof BlockItem)) {
+                        context.logger().warn("Item {} has no layer0 texture, skipping", itemLocation);
+                    }
+                    context.report().outcome(item instanceof BlockItem ? "item-block-model-no-layer" : "item-model-no-layer", itemLocation.toString());
                 }
-
                 continue;
             }
 
@@ -194,7 +198,15 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         }
     }
 
-    private static Key findFallbackTexture(ResourcePack assets, Identifier itemLocation) {
+    private static TextureFallback findFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation) {
+        Key texture = findNamedTexture(assets, itemLocation);
+        if (texture != null) return new TextureFallback(texture, false);
+
+        texture = findRawTexture(context, assets, itemLocation);
+        return texture == null ? null : new TextureFallback(texture, true);
+    }
+
+    private static Key findNamedTexture(ResourcePack assets, Identifier itemLocation) {
         Key itemTexture = Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath());
         Key blockTexture = Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath());
         Key contains = null;
@@ -225,6 +237,9 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             // A malformed raw item file is reported by Minecraft; it must not stop pack conversion.
         }
         return null;
+    }
+
+    private record TextureFallback(Key key, boolean rawRenderer) {
     }
 
     @Override
