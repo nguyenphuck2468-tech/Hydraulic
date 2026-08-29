@@ -557,6 +557,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                     if (name.equals(exact) || name.equals(exactTga)) {
                         return new TextureMatch(relative, false);
                     }
+                    // A fuzzy match must stay in entity assets. A matching
+                    // item or armor name is usually a different visual asset.
+                    if (!relative.startsWith("textures/entity/")) continue;
                     int score = textureScore(path, relative);
                     if (score > bestScore) {
                         best = relative;
