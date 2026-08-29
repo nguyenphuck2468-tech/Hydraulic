@@ -22,4 +22,11 @@ dependencies {
 
     // Only here to suppress "unknown enum constant EnvType.CLIENT" warnings.
     compileOnly(libs.fabric.loader)
+
+    testImplementation(platform("org.junit:junit-bom:5.12.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
