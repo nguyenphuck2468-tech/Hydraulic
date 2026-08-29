@@ -155,6 +155,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 Key fallbackTexture = findFallbackTexture(assets, itemLocation);
                 if (fallbackTexture == null) {
                     context.logger().warn("Item {} has no item model or texture, skipping", itemLocation);
+                    context.report().outcome("item-unresolved");
                     continue;
                 }
                 bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallbackTexture).replace(".png", ""));
@@ -179,6 +180,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             ModelTexture layer0 = layers.getFirst();
             String outputLoc = getOutputFromModel(context, layer0.key()); // TODO: sort this out, layer0.key() can be null, but the method we use doesn't want that
             bedrockPack.addItemTexture(itemLocation.toString(), outputLoc.replace(".png", ""));
+            context.report().outcome("item-direct-model");
         }
     }
 

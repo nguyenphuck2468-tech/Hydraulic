@@ -74,6 +74,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             String texture = findTexture(namespace, path, pack);
             if (texture == null) {
                 context.logger().warn("Skipping custom Bedrock entity {}: no converted texture", key);
+                context.report().outcome("entity-missing-texture");
                 continue;
             }
 
