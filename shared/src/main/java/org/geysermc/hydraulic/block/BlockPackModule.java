@@ -44,6 +44,7 @@ import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.storage.ModStorage;
 import org.geysermc.hydraulic.util.PackUtil;
+import org.geysermc.hydraulic.util.BedrockPropertyMapper;
 import org.geysermc.hydraulic.util.SingletonBlockGetter;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
@@ -72,7 +73,6 @@ import java.util.function.BiFunction;
 @AutoService(PackModule.class)
 public class BlockPackModule extends PackModule<BlockPackModule> {
     private static final String STATE_CONDITION = "query.block_property('%s') == %s";
-    private static final int BEDROCK_MAX_PROPERTY_VALUES = 16;
 
     private final Map<String, StateDefinition> blockStates = new HashMap<>();
     private final Set<String> emptyModels = new HashSet<>();
@@ -199,7 +199,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
             for (Property<?> property : block.getStateDefinition().getProperties()) {
                 if (property instanceof IntegerProperty intProperty) {
-                    builder.intProperty(property.getName(), bedrockValues(intProperty));
+                    builder.intProperty(property.getName(), BedrockPropertyMapper.values(new ArrayList<>(intProperty.getPossibleValues())));
                 } else if (property instanceof BooleanProperty) {
                     builder.booleanProperty(property.getName());
                 } else if (property instanceof EnumProperty<?> enumProperty) {
@@ -345,7 +345,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 for (Property<?> property : state.getProperties()) {
                     String propValue = state.getValue(property).toString();
                     if (property instanceof IntegerProperty intProperty) {
-                        propValue = Integer.toString(bedrockValue(intProperty, state.getValue(intProperty)));
+                        propValue = Integer.toString(BedrockPropertyMapper.value(new ArrayList<>(intProperty.getPossibleValues()), state.getValue(intProperty)));
                     }
                     if (property instanceof EnumProperty<?>) {
                         propValue = "'" + propValue.toLowerCase() + "'";
@@ -387,7 +387,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 CustomBlockState.Builder stateBuilder = blockData.blockStateBuilder();
                 for (Property<?> property : state.getProperties()) {
                     if (property instanceof IntegerProperty intProperty) {
-                        stateBuilder.intProperty(property.getName(), bedrockValue(intProperty, state.getValue(intProperty)));
+                        stateBuilder.intProperty(property.getName(), BedrockPropertyMapper.value(new ArrayList<>(intProperty.getPossibleValues()), state.getValue(intProperty)));
                     } else if (property instanceof BooleanProperty booleanProperty) {
                         stateBuilder.booleanProperty(property.getName(), state.getValue(booleanProperty));
                     } else if (property instanceof EnumProperty<?> enumProperty) {
@@ -458,27 +458,6 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         .build())
                 .selectionBox(createBoxComponent(shape))
                 .collisionBox(createBoxComponent(collisionShape));
-    }
-
-    static List<Integer> bedrockValues(IntegerProperty property) {
-        List<Integer> values = new ArrayList<>(property.getPossibleValues());
-        if (values.size() <= BEDROCK_MAX_PROPERTY_VALUES) {
-            return values;
-        }
-        List<Integer> compacted = new ArrayList<>(BEDROCK_MAX_PROPERTY_VALUES);
-        for (int index = 0; index < BEDROCK_MAX_PROPERTY_VALUES; index++) {
-            compacted.add(index);
-        }
-        return compacted;
-    }
-
-    static int bedrockValue(IntegerProperty property, int value) {
-        List<Integer> values = new ArrayList<>(property.getPossibleValues());
-        if (values.size() <= BEDROCK_MAX_PROPERTY_VALUES) {
-            return value;
-        }
-        int index = values.indexOf(value);
-        return Math.round(index * (BEDROCK_MAX_PROPERTY_VALUES - 1f) / (values.size() - 1f));
     }
 
     @Nullable
