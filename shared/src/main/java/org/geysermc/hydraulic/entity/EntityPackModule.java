@@ -9,9 +9,11 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.phys.shapes.Shapes;
 import org.geysermc.hydraulic.Constants;
 import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
+import org.geysermc.hydraulic.util.GeoUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
@@ -75,6 +77,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 continue;
             }
 
+            addHitboxGeometry(namespace, path, type.getDimensions(), pack);
             JsonObject animations = collectAnimations(namespace, path, pack);
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 
@@ -381,6 +384,27 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             return "geometry.cow";
         }
         return "geometry.humanoid.custom";
+    }
+
+    /**
+     * Gives every textured entity a pack-owned geometry when no converter can
+     * recover its client model. The recovered model always wins; this one-cube
+     * fallback follows the Java hitbox and never relies on a vanilla entity
+     * geometry being present on the Bedrock client.
+     */
+    private static void addHitboxGeometry(String namespace, String path, EntityDimensions dimensions, BedrockResourcePack pack) {
+        String fileName = namespace + "." + path + ".json";
+        String location = "models/entity/" + fileName;
+        if (pack.entityModels() != null && pack.entityModels().containsKey(location)) {
+            return;
+        }
+
+        float halfWidth = dimensions.width() / 2f;
+        // ponytail: one cuboid is intentionally the generic ceiling; add a
+        // framework parser only when a real model cannot be extracted.
+        pack.addEntityModel(GeoUtil.fromShape(
+                Shapes.box(-halfWidth, 0, -halfWidth, halfWidth, dimensions.height(), halfWidth),
+                "geometry." + namespace + "." + path), fileName);
     }
 
     /**
