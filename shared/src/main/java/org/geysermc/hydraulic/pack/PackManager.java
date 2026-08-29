@@ -60,7 +60,7 @@ public class PackManager {
      * Increment when the generated Bedrock-pack contract changes. This keeps
      * cached packs from surviving a Hydraulic update that changes conversion.
      */
-    public static final String PACK_GENERATION_REVISION = "15";
+    public static final String PACK_GENERATION_REVISION = "16";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -246,6 +246,7 @@ public class PackManager {
             LOGGER.error("Failed to convert mod {} to pack", mod.id(), exception);
             return false;
         }
+        long convertedAt = System.nanoTime();
 
         try {
             converter.pack();
@@ -253,6 +254,7 @@ public class PackManager {
             LOGGER.error("Failed to export pack for mod {}", mod.id(), exception);
             return false;
         }
+        long packagedAt = System.nanoTime();
 
         boolean created = Files.isRegularFile(packPath);
         if (created) {
@@ -266,12 +268,18 @@ public class PackManager {
                 if (!validation.warnings().isEmpty()) {
                     LOGGER.warn("Pack validation warnings for {}: {}", mod.id(), validation.warnings());
                 }
+                long validatedAt = System.nanoTime();
+                long assetsMillis = (convertedAt - startedAt) / 1_000_000;
+                long packageMillis = (packagedAt - convertedAt) / 1_000_000;
+                long validationMillis = (validatedAt - packagedAt) / 1_000_000;
                 LOGGER.info("Conversion report {} [blocks={}, items={}, entities={}, fallback={}, files={}, {} ms, {} bytes]", mod.id(),
                         blockCount, itemCount, entityCount, report.fallbackSummary(), validation.files(),
-                        (System.nanoTime() - startedAt) / 1_000_000, Files.size(packPath));
+                        (validatedAt - startedAt) / 1_000_000, Files.size(packPath));
+                LOGGER.info("Conversion timings {} [assets={} ms, package={} ms, validation={} ms]", mod.id(),
+                        assetsMillis, packageMillis, validationMillis);
                 Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(mod.id() + ".json");
                 Files.createDirectories(reportPath.getParent());
-                Files.writeString(reportPath, report.json(blockCount, itemCount, entityCount).toString(), StandardCharsets.UTF_8);
+                Files.writeString(reportPath, report.json(blockCount, itemCount, entityCount, assetsMillis, packageMillis, validationMillis).toString(), StandardCharsets.UTF_8);
             } catch (IOException exception) {
                 try {
                     Files.deleteIfExists(packPath);

@@ -59,6 +59,17 @@ class PackArchiveValidatorTest {
         assertTrue(report.fallbacks() == 3);
     }
 
+    @Test
+    void recordsAffectedIdsAndPhaseTimings() {
+        ConversionReport report = new ConversionReport();
+        report.outcome("entity-hitbox", "example:beast");
+
+        var json = report.json(0, 0, 1, 12, 34, 56);
+
+        assertTrue(json.getAsJsonObject("outcome_ids").getAsJsonArray("entity-hitbox").contains(new com.google.gson.JsonPrimitive("example:beast")));
+        assertTrue(json.getAsJsonObject("timings_ms").get("package").getAsLong() == 34);
+    }
+
     private static void entry(ZipOutputStream zip, String name, String content) throws IOException {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content.getBytes(StandardCharsets.UTF_8));

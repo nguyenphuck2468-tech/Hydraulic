@@ -74,7 +74,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             String texture = findTexture(namespace, path, pack);
             if (texture == null) {
                 context.logger().warn("Skipping custom Bedrock entity {}: no converted texture", key);
-                context.report().outcome("entity-missing-texture");
+                context.report().outcome("entity-missing-texture", key.toString());
                 continue;
             }
 
@@ -83,9 +83,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 addHitboxGeometry(namespace, path, type.getDimensions(), pack);
                 context.logger().warn("Entity {} has no converted geometry; using hitbox fallback", key);
                 context.report().fallback("entity-hitbox");
-                context.report().outcome("entity-hitbox");
+                context.report().outcome("entity-hitbox", key.toString());
             } else {
-                context.report().outcome("entity-native-geometry");
+                context.report().outcome("entity-native-geometry", key.toString());
             }
             JsonObject animations = collectAnimations(namespace, path, pack);
             String animationBone = hitboxFallback ? "bone_0" : rootBone(namespace, path, pack);
@@ -94,9 +94,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 pack.addExtraFile(animationFile(animations), "animations/" + namespace + "." + path + ".animation.json");
                 context.logger().warn("Entity {} has no converted animation; using generic idle/walk fallback", key);
                 context.report().fallback("entity-animation");
-                context.report().outcome(hitboxFallback ? "entity-generic-animation" : "entity-native-generic-animation");
+                context.report().outcome(hitboxFallback ? "entity-generic-animation" : "entity-native-generic-animation", key.toString());
             } else if (animations.size() > 0) {
-                context.report().outcome("entity-native-animation");
+                context.report().outcome("entity-native-animation", key.toString());
             }
             AnimationRefs refs = resolveAnimationRefs(key.toString(), animations);
 

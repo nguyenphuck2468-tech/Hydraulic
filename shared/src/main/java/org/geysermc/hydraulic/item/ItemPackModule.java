@@ -158,17 +158,20 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             }
             if (baseModel == null) {
                 Key fallbackTexture = findFallbackTexture(assets, itemLocation);
-                if (fallbackTexture == null) fallbackTexture = findRawTexture(context, assets, itemLocation);
+                boolean rawRendererFallback = false;
+                if (fallbackTexture == null) {
+                    fallbackTexture = findRawTexture(context, assets, itemLocation);
+                    rawRendererFallback = fallbackTexture != null;
+                }
                 if (fallbackTexture == null) {
                     context.logger().warn("Item {} has no item model or texture, skipping", itemLocation);
-                    context.report().outcome("item-unresolved");
+                    context.report().outcome("item-unresolved", itemLocation.toString());
                     continue;
                 }
                 bedrockPack.addItemTexture(itemLocation.toString(), getOutputFromModel(context, fallbackTexture).replace(".png", ""));
                 context.logger().warn("Item {} has no item model; using texture fallback", itemLocation);
                 context.report().fallback("item-texture");
-                context.report().outcome("item-texture-fallback");
-                context.report().outcome("item-raw-renderer-fallback");
+                context.report().outcome(rawRendererFallback ? "item-raw-renderer-fallback" : "item-texture-fallback", itemLocation.toString());
                 continue;
             }
 
@@ -187,7 +190,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             ModelTexture layer0 = layers.getFirst();
             String outputLoc = getOutputFromModel(context, layer0.key()); // TODO: sort this out, layer0.key() can be null, but the method we use doesn't want that
             bedrockPack.addItemTexture(itemLocation.toString(), outputLoc.replace(".png", ""));
-            context.report().outcome("item-direct-model");
+            context.report().outcome("item-direct-model", itemLocation.toString());
         }
     }
 
