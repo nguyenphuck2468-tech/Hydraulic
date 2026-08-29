@@ -62,6 +62,7 @@ import team.unnamed.creative.model.ModelTexture;
 import team.unnamed.creative.model.ModelTextures;
 import team.unnamed.creative.texture.Texture;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -69,6 +70,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiFunction;
 
 @AutoService(PackModule.class)
@@ -189,9 +191,18 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 if (geometry == null) continue;
                 bedrockPack.addBlockModel(
                         GeoUtil.fromShape(state.getShape(new SingletonBlockGetter(state), BlockPos.ZERO), geometry),
-                        "fallback/" + geometry.substring("geometry.".length()) + ".json");
+                        fallbackGeometryPath(geometry));
             }
         }
+    }
+
+    /**
+     * Bedrock platforms impose a practical 80-character resource-path limit.
+     * Geometry identifiers remain descriptive for diagnostics, while the
+     * serialized filename is a deterministic, collision-resistant UUID.
+     */
+    private static String fallbackGeometryPath(String geometry) {
+        return "f/" + UUID.nameUUIDFromBytes(geometry.getBytes(StandardCharsets.UTF_8)) + ".json";
     }
 
     @Override
