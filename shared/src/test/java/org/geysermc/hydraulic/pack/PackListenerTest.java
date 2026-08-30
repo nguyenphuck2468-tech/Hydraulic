@@ -47,6 +47,14 @@ class PackListenerTest {
         assertTrue(PackListener.needsConversion(archive, "e5d87397-0931-4609-a849-01b2da7a3529"));
     }
 
+    @Test
+    void partArchiveIsNeverReusedOrRegistered() throws IOException {
+        String fingerprint = "e5d87397-0931-4609-a849-01b2da7a3529";
+        Path archive = archive("complete.mcpack.part", fingerprint, true);
+
+        assertTrue(PackListener.needsConversion(archive, fingerprint));
+    }
+
     private Path archive(String fileName, String fingerprint, boolean includeAsset) throws IOException {
         Path archive = temporaryDirectory.resolve(fileName);
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {

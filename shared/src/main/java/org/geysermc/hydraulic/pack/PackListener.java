@@ -137,7 +137,7 @@ public class PackListener {
 
         List<PackRequest> packsToLoad = plan.toConvert();
         if (packsToLoad.isEmpty()) {
-            logSummary(plan.reusable().size(), 0, 0, 0);
+            logSummary(plan, List.of(), 0, 0, List.of());
             return;
         }
 
@@ -148,11 +148,13 @@ public class PackListener {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 LOGGER.info("Converting pack for mod {}", request.mod().id());
                 try {
-                    return new PackResult(request.packPath(),
-                            this.manager.createPack(request.mod(), request.packPath(), request.fingerprint()));
+                    long conversionStarted = System.nanoTime();
+                    return new PackResult(request.mod().id(), request.packPath(),
+                            this.manager.createPack(request.mod(), request.packPath(), request.fingerprint()),
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - conversionStarted));
                 } catch (Throwable t) {
                     LOGGER.error("Failed to convert pack for mod {}", request.mod().id(), t);
-                    return new PackResult(request.packPath(), PackManager.PackCreationResult.FAILED);
+                    return new PackResult(request.mod().id(), request.packPath(), PackManager.PackCreationResult.FAILED, 0);
                 }
             }, THREAD_POOL));
         }
@@ -183,7 +185,7 @@ public class PackListener {
 
         LOGGER.info("Registered {} of {} converted packs in {}", registered, packsToLoad.size(),
                 FormatUtil.humanReadableFormat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
-        logSummary(plan.reusable().size(), registered, skippedEmpty, unfinishedMods.size());
+        logSummary(plan, completed, registered, skippedEmpty, unfinishedMods);
     }
 
     private PackPlan planPacks() {
@@ -265,6 +267,7 @@ public class PackListener {
      * @return {@code true} if the pack needs to be converted.
      */
     static boolean needsConversion(Path packPath, String fingerprint) {
+        if (packPath.getFileName().toString().endsWith(".part")) return true;
         try (ZipFile zip = new ZipFile(packPath.toFile())) {
             var manifestEntry = zip.getEntry("manifest.json");
             var generationMarkerEntry = zip.getEntry(PackManager.PACK_GENERATION_MARKER);
@@ -300,9 +303,21 @@ public class PackListener {
         }
     }
 
-    private static void logSummary(int reused, int converted, int skippedEmpty, int timedOut) {
-        LOGGER.info("Hydraulic packs: reused={} | converted={} | skipped-empty={} | timed-out={}",
-                reused, converted, skippedEmpty, timedOut);
+    private void logSummary(PackPlan plan, List<PackResult> completed, int converted, int skippedEmpty, List<String> deferred) {
+        int detected = plan.reusable().size() + plan.toConvert().size();
+        LOGGER.info("Hydraulic: {} detected | {} reused | {} converted | {} skipped-empty | {} deferred",
+                detected, plan.reusable().size(), converted, skippedEmpty, deferred.size());
+        List<PackResult> slowest = completed.stream().sorted(java.util.Comparator.comparingLong(PackResult::millis).reversed()).limit(2).toList();
+        if (!slowest.isEmpty()) {
+            LOGGER.info("Slowest: {}", slowest.stream().map(result -> result.modId() + " " + result.millis() + "ms (conversion)")
+                    .collect(java.util.stream.Collectors.joining(", ")));
+        }
+        PackManager.Quality quality = java.util.stream.Stream.concat(plan.reusable().stream().map(request -> request.mod().id()),
+                        completed.stream().map(PackResult::modId))
+                .map(manager::qualityFor)
+                .reduce(PackManager.Quality.EMPTY, PackManager.Quality::plus);
+        LOGGER.info("Quality: {} native geometries | {} generic entity fallbacks | {} unresolved item assets",
+                quality.nativeGeometries(), quality.genericEntityFallbacks(), quality.unresolvedItemAssets());
     }
 
     private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {
@@ -311,7 +326,7 @@ public class PackListener {
     private record PackPlan(List<PackRequest> reusable, List<PackRequest> toConvert) {
     }
 
-    private record PackResult(Path packPath, PackManager.PackCreationResult outcome) {
+    private record PackResult(String modId, Path packPath, PackManager.PackCreationResult outcome, long millis) {
     }
 }
 

@@ -172,6 +172,25 @@ class PackArchiveValidatorTest {
         assertTrue(json.get("archive_bytes").getAsLong() == 789);
     }
 
+    @Test
+    void summarizesQualityWithoutDoubleCountingHitboxAnimationFallbacks() {
+        com.google.gson.JsonObject report = new com.google.gson.JsonObject();
+        report.add("outcomes", com.google.gson.JsonParser.parseString("""
+                {"entity-native-geometry":2,"entity-hitbox":1,"entity-generic-animation":1,
+                 "entity-native-generic-animation":1,"item-unresolved":3,"item-missing-output-texture":2}
+                """).getAsJsonObject());
+        report.add("outcome_ids", com.google.gson.JsonParser.parseString("""
+                {"entity-hitbox":["example:one"],"entity-generic-animation":["example:one"],
+                 "entity-native-generic-animation":["example:two"]}
+                """).getAsJsonObject());
+
+        PackManager.Quality quality = PackManager.qualityFromReport(report);
+
+        assertTrue(quality.nativeGeometries() == 2);
+        assertTrue(quality.genericEntityFallbacks() == 2);
+        assertTrue(quality.unresolvedItemAssets() == 5);
+    }
+
     private static void entry(ZipOutputStream zip, String name, String content) throws IOException {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content.getBytes(StandardCharsets.UTF_8));

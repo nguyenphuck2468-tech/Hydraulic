@@ -5,6 +5,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.component.DataComponents;
@@ -349,6 +350,36 @@ public class PackManager {
         }
     }
 
+    Quality qualityFor(String modId) {
+        Path report = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(modId + ".json");
+        try {
+            return qualityFromReport(JsonParser.parseString(Files.readString(report, StandardCharsets.UTF_8)).getAsJsonObject());
+        } catch (Exception ignored) {
+            return Quality.EMPTY;
+        }
+    }
+
+    static Quality qualityFromReport(JsonObject report) {
+        JsonObject outcomes = report.getAsJsonObject("outcomes");
+        if (outcomes == null) return Quality.EMPTY;
+        int nativeGeometries = outcome(outcomes, "entity-native-geometry");
+        java.util.Set<String> genericEntities = new java.util.HashSet<>();
+        JsonObject ids = report.getAsJsonObject("outcome_ids");
+        if (ids != null) {
+            for (String kind : List.of("entity-hitbox", "entity-generic-animation", "entity-native-generic-animation")) {
+                if (!ids.has(kind) || !ids.get(kind).isJsonArray()) continue;
+                for (var id : ids.getAsJsonArray(kind)) genericEntities.add(id.getAsString());
+            }
+        }
+        int unresolvedItems = outcome(outcomes, "item-unresolved") + outcome(outcomes, "item-missing-output-texture")
+                + outcome(outcomes, "item-model-stitch-failed") + outcome(outcomes, "item-model-no-layer");
+        return new Quality(nativeGeometries, genericEntities.size(), unresolvedItems);
+    }
+
+    private static int outcome(JsonObject outcomes, String key) {
+        return outcomes.has(key) ? outcomes.get(key).getAsInt() : 0;
+    }
+
     private static void discardStagedPack(Path stagedPack, String modId) {
         try {
             Files.deleteIfExists(stagedPack);
@@ -361,6 +392,16 @@ public class PackManager {
         CREATED,
         METADATA_ONLY,
         FAILED
+    }
+
+    record Quality(int nativeGeometries, int genericEntityFallbacks, int unresolvedItemAssets) {
+        static final Quality EMPTY = new Quality(0, 0, 0);
+
+        Quality plus(Quality other) {
+            return new Quality(nativeGeometries + other.nativeGeometries,
+                    genericEntityFallbacks + other.genericEntityFallbacks,
+                    unresolvedItemAssets + other.unresolvedItemAssets);
+        }
     }
 
     private void callEvents(@NotNull Event event) {
