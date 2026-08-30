@@ -66,6 +66,21 @@ class PackArchiveValidatorTest {
     }
 
     @Test
+    void reportsMissingTextureAtlasEntries() throws IOException {
+        Path archive = temporaryDirectory.resolve("fixture.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "textures/item_texture.json", "{\"texture_data\":{\"example:missing\":{\"textures\":[\"textures/items/example/missing\"]}}}");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertTrue(result.valid());
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing atlas texture")));
+    }
+
+    @Test
     void summarizesFallbacksWithoutPerModRules() {
         ConversionReport report = new ConversionReport();
         report.fallback("item-texture");

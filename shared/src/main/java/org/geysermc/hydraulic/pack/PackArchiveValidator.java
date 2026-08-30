@@ -26,6 +26,7 @@ public final class PackArchiveValidator {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         List<EntityReferences> entityReferences = new ArrayList<>();
+        List<AtlasReferences> atlasReferences = new ArrayList<>();
         Set<String> filesByPath = new HashSet<>();
         Set<String> geometries = new HashSet<>();
         Set<String> animations = new HashSet<>();
@@ -47,7 +48,7 @@ public final class PackArchiveValidator {
                     try (InputStreamReader reader = new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8)) {
                         JsonElement parsed = JsonParser.parseReader(reader);
                         if (parsed.isJsonObject()) {
-                            collectReferences(entry.getName(), parsed.getAsJsonObject(), entityReferences, geometries, animations, animationControllers);
+                            collectReferences(entry.getName(), parsed.getAsJsonObject(), entityReferences, atlasReferences, geometries, animations, animationControllers);
                         }
                     } catch (RuntimeException exception) {
                         errors.add("invalid JSON " + entry.getName());
@@ -77,10 +78,17 @@ public final class PackArchiveValidator {
                 }
             }
         }
+        for (AtlasReferences atlas : atlasReferences) {
+            for (String texture : atlas.textures()) {
+                if (!filesByPath.contains(texture + ".png") && !filesByPath.contains(texture + ".tga")) {
+                    warnings.add("missing atlas texture " + atlas.file() + " -> " + atlas.key() + " -> " + texture);
+                }
+            }
+        }
         return new Result(files, List.copyOf(errors), List.copyOf(warnings));
     }
 
-    private static void collectReferences(String file, JsonObject root, List<EntityReferences> entities, Set<String> geometries,
+    private static void collectReferences(String file, JsonObject root, List<EntityReferences> entities, List<AtlasReferences> atlases, Set<String> geometries,
                                           Set<String> animations, Set<String> animationControllers) {
         if (file.startsWith("entity/")) {
             collectEntityReferences(file, root, entities);
@@ -96,6 +104,17 @@ public final class PackArchiveValidator {
             strings(object(root, "animations"), animations);
         } else if (file.startsWith("animation_controllers/")) {
             strings(object(root, "animation_controllers"), animationControllers);
+        }
+        collectAtlasReferences(file, root, atlases);
+    }
+
+    private static void collectAtlasReferences(String file, JsonObject root, List<AtlasReferences> atlases) {
+        JsonObject textureData = object(root, "texture_data");
+        if (textureData == null) return;
+        for (var entry : textureData.entrySet()) {
+            JsonObject definition = entry.getValue().isJsonObject() ? entry.getValue().getAsJsonObject() : null;
+            List<String> textures = textureValues(definition == null ? null : definition.get("textures"));
+            if (!textures.isEmpty()) atlases.add(new AtlasReferences(file, entry.getKey(), textures));
         }
     }
 
@@ -142,6 +161,22 @@ public final class PackArchiveValidator {
         return values;
     }
 
+    private static List<String> textureValues(JsonElement textures) {
+        if (textures == null) return List.of();
+        if (textures.isJsonPrimitive() && textures.getAsJsonPrimitive().isString()) {
+            String value = textures.getAsString();
+            return value.startsWith("textures/") ? List.of(value) : List.of();
+        }
+        if (!textures.isJsonArray()) return List.of();
+        List<String> values = new ArrayList<>();
+        for (JsonElement texture : textures.getAsJsonArray()) {
+            if (texture.isJsonPrimitive() && texture.getAsJsonPrimitive().isString() && texture.getAsString().startsWith("textures/")) {
+                values.add(texture.getAsString());
+            }
+        }
+        return values;
+    }
+
     private static List<String> arrayValues(JsonElement array) {
         if (array == null || !array.isJsonArray()) return List.of();
         List<String> values = new ArrayList<>();
@@ -153,6 +188,9 @@ public final class PackArchiveValidator {
 
     private record EntityReferences(String file, String namespace, List<String> textures, List<String> geometries,
                                     List<String> animations, List<String> animationControllers) {
+    }
+
+    private record AtlasReferences(String file, String key, List<String> textures) {
     }
 
     public record Result(int files, List<String> errors, List<String> warnings) {
