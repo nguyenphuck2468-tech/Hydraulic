@@ -50,27 +50,18 @@ public class PackListener {
     private static final long STARTUP_CONVERSION_BUDGET_MILLIS = 35_000;
     private static final int CONVERSION_THREADS = Math.max(1, Math.min(2,
             (Runtime.getRuntime().availableProcessors() + 1) / 2));
-    private static final ExecutorService THREAD_POOL;
-
     private final HydraulicImpl hydraulic;
     private final PackManager manager;
-
-    static {
-        THREAD_POOL = Executors.newFixedThreadPool(
-            CONVERSION_THREADS,
-            new ThreadFactoryBuilder()
-                .setNameFormat(Constants.MOD_NAME + " Conversion Thread #%d")
-                .setUncaughtExceptionHandler((thread, throwable) -> LOGGER.error("Uncaught exception in thread {}", thread.getName(), throwable))
-                .build()
-        );
-    }
+    private ExecutorService threadPool = newThreadPool();
 
     public PackListener(HydraulicImpl hydraulic, PackManager manager) {
         this.hydraulic = hydraulic;
         this.manager = manager;
 
         hydraulic.registerServerStop(server -> {
-            THREAD_POOL.shutdownNow(); // Staged archives make interruption safe on server stop.
+            synchronized (this) {
+                threadPool.shutdownNow(); // Staged archives make interruption safe on server stop.
+            }
         });
 
         warmVanillaPack();
@@ -104,7 +95,11 @@ public class PackListener {
 
         LOGGER.info("Pre-fetching vanilla pack for Minecraft {}...", version);
         CompletableFuture.runAsync(() ->
-                VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)));
+                VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)), executor())
+                .exceptionally(exception -> {
+                    LOGGER.warn("Could not pre-fetch the vanilla pack", exception);
+                    return null;
+                });
     }
 
     @Subscribe(postOrder = PostOrder.LATE)
@@ -113,7 +108,8 @@ public class PackListener {
         PackPlan plan;
         LOGGER.info("Planning Hydraulic packs with {} conversion worker(s) and a {} ms startup budget",
                 CONVERSION_THREADS, STARTUP_CONVERSION_BUDGET_MILLIS);
-        CompletableFuture<PackPlan> planning = CompletableFuture.supplyAsync(this::planPacks, THREAD_POOL);
+        ExecutorService executor = executor();
+        CompletableFuture<PackPlan> planning = CompletableFuture.supplyAsync(this::planPacks, executor);
         try {
             plan = planning.get(STARTUP_CONVERSION_BUDGET_MILLIS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException exception) {
@@ -159,7 +155,7 @@ public class PackListener {
                     LOGGER.error("Failed to convert pack for mod {}", request.mod().id(), t);
                     return new PackResult(request.mod().id(), request.packPath(), PackManager.PackCreationResult.FAILED, 0);
                 }
-            }, THREAD_POOL));
+            }, executor));
         }
 
         List<PackResult> completed = awaitCompleted(futures, remainingBudgetMillis(startedAt));
@@ -263,6 +259,20 @@ public class PackListener {
     private static long remainingBudgetMillis(long startedAt) {
         return Math.max(0, STARTUP_CONVERSION_BUDGET_MILLIS
                 - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
+    }
+
+    private synchronized ExecutorService executor() {
+        if (threadPool.isShutdown()) threadPool = newThreadPool();
+        return threadPool;
+    }
+
+    private static ExecutorService newThreadPool() {
+        return Executors.newFixedThreadPool(CONVERSION_THREADS,
+                new ThreadFactoryBuilder()
+                        .setNameFormat(Constants.MOD_NAME + " Conversion Thread #%d")
+                        .setUncaughtExceptionHandler((thread, throwable) ->
+                                LOGGER.error("Uncaught exception in thread {}", thread.getName(), throwable))
+                        .build());
     }
 
     /**

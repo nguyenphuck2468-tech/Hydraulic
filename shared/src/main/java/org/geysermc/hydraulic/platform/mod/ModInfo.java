@@ -18,7 +18,9 @@ public record ModInfo(
     @Nullable
     public Path resolveFile(String file) {
         for (final Path path : roots) {
-            final Path resolved = path.resolve(file.replace("/", path.getFileSystem().getSeparator()));
+            final Path root = path.toAbsolutePath().normalize();
+            final Path resolved = root.resolve(file.replace("/", path.getFileSystem().getSeparator())).normalize();
+            if (!resolved.startsWith(root)) continue;
             if (Files.isRegularFile(resolved)) {
                 return resolved;
             }

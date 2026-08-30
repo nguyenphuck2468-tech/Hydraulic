@@ -8,8 +8,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class HydraulicKey implements org.geysermc.geyser.api.util.Identifier, Key {
-    private String namespace;
-    private String path;
+    private final String namespace;
+    private final String path;
 
     public HydraulicKey(@NotNull String namespace, @NotNull String path) {
         this.namespace = namespace;
@@ -82,14 +82,6 @@ public class HydraulicKey implements org.geysermc.geyser.api.util.Identifier, Ke
         return Identifier.fromNamespaceAndPath(this.namespace, this.path);
     }
 
-    public void namespace(String namespace) {
-        this.namespace = namespace;
-    }
-
-    public void path(String path) {
-        this.path = path;
-    }
-
     // Messy, but makes everyone's life so much easier
     @Override
     public boolean equals(Object other) {
@@ -108,5 +100,10 @@ public class HydraulicKey implements org.geysermc.geyser.api.util.Identifier, Ke
         }
 
         return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return 31 * namespace.hashCode() + path.hashCode();
     }
 }

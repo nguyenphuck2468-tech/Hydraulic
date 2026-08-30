@@ -213,6 +213,7 @@ public class PackManager {
                 .packName(mod.name())
                 .logListener(new PackLogListener(LoggerFactory.getLogger(LOGGER.getName() + "/" + mod.id())))
                 .converters(pipelines)
+                .inputs(mod.roots())
                 .output(stagedPack)
                 .vanillaPackPath(vanillaPath)
                 .textureSubdirectory(mod.namespace())
@@ -245,7 +246,6 @@ public class PackManager {
             }
         });
 
-        int reportedEntityDiagnostics = 0;
         try {
             Files.deleteIfExists(stagedPack);
 
@@ -255,19 +255,16 @@ public class PackManager {
                     report.outcome("resource-isolated", finding.resource());
                     report.resolution("resource-diagnostics", finding.resource(), finding.description());
                 }
-                long rootStartedAt = System.nanoTime();
-                converter.input(root, false).convert();
-                List<EntityModelScanner.Diagnostic> diagnostics = converter.entityModelDiagnostics();
-                for (int index = reportedEntityDiagnostics; index < diagnostics.size(); index++) {
-                    EntityModelScanner.Diagnostic diagnostic = diagnostics.get(index);
-                    report.fallback("entity-reflection");
-                    report.outcome("entity-reflection-fallback", diagnostic.path());
-                    report.resolution("entity-reflection-fallback", diagnostic.path(), diagnostic.detail());
-                }
-                reportedEntityDiagnostics = diagnostics.size();
-                LOGGER.info("Conversion input {} root {} completed in {} ms", mod.id(), root,
-                        (System.nanoTime() - rootStartedAt) / 1_000_000);
             }
+            long rootsStartedAt = System.nanoTime();
+            converter.convert();
+            for (EntityModelScanner.Diagnostic diagnostic : converter.entityModelDiagnostics()) {
+                report.fallback("entity-reflection");
+                report.outcome("entity-reflection-fallback", diagnostic.path());
+                report.resolution("entity-reflection-fallback", diagnostic.path(), diagnostic.detail());
+            }
+            LOGGER.info("Conversion input {} combined {} root(s) in {} ms", mod.id(), mod.roots().size(),
+                    (System.nanoTime() - rootsStartedAt) / 1_000_000);
         } catch (IOException | RuntimeException exception) {
             discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to convert mod {} to pack", mod.id(), exception);

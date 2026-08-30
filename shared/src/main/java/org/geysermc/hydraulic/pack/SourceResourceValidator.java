@@ -34,7 +34,7 @@ final class SourceResourceValidator {
 
     private static void validate(Path root, Path file, List<Finding> findings) {
         String resource = root.relativize(file).toString().replace('\\', '/');
-        if (!resource.startsWith("assets/")) return;
+        if (!resource.startsWith("assets/") && !resource.startsWith("data/")) return;
         try {
             JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8));
         } catch (Exception exception) {

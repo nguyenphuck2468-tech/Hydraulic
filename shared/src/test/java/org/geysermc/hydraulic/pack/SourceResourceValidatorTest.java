@@ -33,4 +33,17 @@ class SourceResourceValidatorTest {
         assertTrue(finding.line() > 0);
         assertTrue(finding.column() > 0);
     }
+
+    @Test
+    void identifiesMalformedDataPackResources() throws IOException {
+        Path bad = temporaryDirectory.resolve("data/example/recipes/bad.json");
+        Files.createDirectories(bad.getParent());
+        Files.writeString(bad, "{\"result\":");
+
+        var finding = SourceResourceValidator.validate(temporaryDirectory).getFirst();
+
+        assertEquals("example", finding.namespace());
+        assertEquals("data/example/recipes/bad.json", finding.resource());
+        assertEquals("recipe", finding.type());
+    }
 }
