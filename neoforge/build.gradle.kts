@@ -36,9 +36,14 @@ dependencies {
 
     shadow(project(path = ":shared", configuration = "transformProductionNeoForge")) { isTransitive = false }
 
-    // TODO fix neoforge runServer task
     runtimeOnly(libs.pack.converter)
     includeTransitive(libs.pack.converter)
+
+    localRuntime(libs.geyser.neoforge) {
+        exclude(group = "io.netty")
+        exclude(group = "io.netty.incubator")
+        exclude(group = "org.incendo")
+    }
 }
 
 tasks {

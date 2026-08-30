@@ -99,8 +99,9 @@ you're interested in helping out with Hydraulic.
    folder along with Hydraulic.
 
 NeoForge is included in the build and release artifacts. Its dedicated
-`runServer` development task is not yet a supported smoke-test path, so test
-the produced NeoForge JAR in the intended server environment before release.
+   `runServer` development task includes Geyser and can be used for a local
+   startup smoke test; still test the produced NeoForge JAR in its intended
+   server environment before release.
 
 ### Validation checklist
 
