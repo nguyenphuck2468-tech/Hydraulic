@@ -24,14 +24,25 @@ final class ItemAssetResolver {
     }
 
     static ResolvedItemAsset resolve(ModInfo mod, Identifier item) {
-        State state = new State(mod, item.getNamespace());
-        Path definition = mod.resolveFile("assets/" + item.getNamespace() + "/items/" + item.getPath() + ".json");
+        return resolve(mod, item, item, null);
+    }
+
+    static ResolvedItemAsset resolve(ModInfo mod, Identifier item, Identifier itemModel, Identifier block) {
+        State state = new State(mod, itemModel.getNamespace());
+        Path definition = mod.resolveFile("assets/" + itemModel.getNamespace() + "/items/" + itemModel.getPath() + ".json");
         if (definition != null) {
             scanItemDefinition(read(definition), state);
         }
         // Legacy models remain the reliable baseline when a 26.2 item
         // definition is absent or only selects another model at runtime.
-        scanModel(Key.key(item.getNamespace(), "item/" + item.getPath()), state, false);
+        scanModel(Key.key(itemModel.getNamespace(), "item/" + itemModel.getPath()), state, false);
+        if (!itemModel.equals(item)) {
+            scanModel(Key.key(item.getNamespace(), "item/" + item.getPath()), state, false);
+        }
+        if (block != null) {
+            scanModel(Key.key(block.getNamespace(), "block/" + block.getPath()), state, false);
+            scanBlockState(read(mod.resolveFile("assets/" + block.getNamespace() + "/blockstates/" + block.getPath() + ".json")), state, block.getNamespace());
+        }
 
         List<Key> layers = new ArrayList<>();
         state.textures.entrySet().stream()
@@ -43,6 +54,12 @@ final class ItemAssetResolver {
         if (layers.isEmpty()) {
             Key particle = resolveTexture(state.textures.get("particle"), state, new HashSet<>());
             if (particle != null) layers.add(particle);
+        }
+        if (layers.isEmpty()) {
+            state.textures.values().stream()
+                    .map(value -> resolveTexture(value, state, new HashSet<>()))
+                    .filter(java.util.Objects::nonNull)
+                    .findFirst().ifPresent(layers::add);
         }
         String reason = state.specialRenderer ? "special-renderer"
                 : state.customTint ? "custom-tint"
@@ -87,6 +104,23 @@ final class ItemAssetResolver {
         }
         String parentKey = string(model, "parent");
         if (parentKey != null) scanModel(key(parentKey, key.namespace()), state, true);
+    }
+
+    private static void scanBlockState(JsonElement element, State state, String namespace) {
+        if (element == null) return;
+        if (element.isJsonArray()) {
+            for (JsonElement entry : element.getAsJsonArray()) scanBlockState(entry, state, namespace);
+            return;
+        }
+        if (!element.isJsonObject()) return;
+        for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            JsonElement value = entry.getValue();
+            if (entry.getKey().equals("model") && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+                scanModel(key(value.getAsString(), namespace), state, false);
+            } else {
+                scanBlockState(value, state, namespace);
+            }
+        }
     }
 
     private static Key resolveTexture(String value, State state, Set<String> resolving) {

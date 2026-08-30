@@ -3,6 +3,7 @@ package org.geysermc.hydraulic.item;
 import com.google.auto.service.AutoService;
 import com.google.common.collect.Lists;
 import net.kyori.adventure.key.Key;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.DefaultedRegistry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -120,8 +121,12 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         PackLogListener packLogListener = new PackLogListener(context.logger());
         for (Item item : items) {
             Identifier itemLocation = BuiltInRegistries.ITEM.getKey(item);
+            Identifier itemModelLocation = itemModelLocation(item, itemLocation);
 
-            Model baseModel = context.modelProvider().model(Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath()));
+            Model baseModel = context.modelProvider().model(Key.key(itemModelLocation.getNamespace(), "item/" + itemModelLocation.getPath()));
+            if (baseModel == null && !itemModelLocation.equals(itemLocation)) {
+                baseModel = context.modelProvider().model(Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath()));
+            }
             if (baseModel == null) {
                 continue;
             }
@@ -155,13 +160,19 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         PackLogListener packLogListener = new PackLogListener(context.logger());
         for (Item item : items) {
             Identifier itemLocation = BuiltInRegistries.ITEM.getKey(item);
-            ItemAssetResolver.ResolvedItemAsset resolvedAsset = ItemAssetResolver.resolve(context.mod(), itemLocation);
+            Identifier itemModelLocation = itemModelLocation(item, itemLocation);
+            Identifier blockLocation = item instanceof BlockItem blockItem ? BuiltInRegistries.BLOCK.getKey(blockItem.getBlock()) : null;
+            ItemAssetResolver.ResolvedItemAsset resolvedAsset = ItemAssetResolver.resolve(context.mod(), itemLocation, itemModelLocation, blockLocation);
 
-            Model baseModel = assets.model(Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath()));
+            Model baseModel = assets.model(Key.key(itemModelLocation.getNamespace(), "item/" + itemModelLocation.getPath()));
+            if (baseModel == null && !itemModelLocation.equals(itemLocation)) {
+                baseModel = assets.model(Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath()));
+            }
             if (baseModel == null && item instanceof BlockItem) {
                 // Modern block items frequently ship no legacy item/ model - their
                 // inventory look comes straight from the block model.
-                baseModel = assets.model(Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath()));
+                Identifier modelLocation = blockLocation == null ? itemLocation : blockLocation;
+                baseModel = assets.model(Key.key(modelLocation.getNamespace(), "block/" + modelLocation.getPath()));
             }
             if (baseModel == null) {
                 if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "has no item model", resolvedAsset)) {
@@ -199,9 +210,12 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
 
             ItemTexture texture = writeItemTexture(context, bedrockPack, itemLocation, textureLayers);
             if (texture == null) {
-                context.logger().warn("Item {} model texture {} is absent from Bedrock output, skipping", itemLocation, textureLayers.getFirst());
-                context.report().outcome("item-missing-output-texture", itemLocation.toString());
-                reportReason(context, itemLocation, "missing-texture");
+                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, itemModelLocation,
+                        "model texture " + textureLayers.getFirst() + " is absent from Bedrock output", resolvedAsset)) {
+                    context.logger().warn("Item {} model texture {} is absent from Bedrock output, skipping", itemLocation, textureLayers.getFirst());
+                    context.report().outcome("item-missing-output-texture", itemLocation.toString());
+                    reportReason(context, itemLocation, "missing-texture");
+                }
                 continue;
             }
             bedrockPack.addItemTexture(itemLocation.toString(), texture.path());
@@ -215,23 +229,29 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
 
     private static boolean tryFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, BedrockResourcePack pack,
                                               Identifier item, String reason, ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
-        TextureFallback fallback = findFallbackTexture(context, assets, item, resolvedAsset);
-        if (fallback == null) return false;
+        return tryFallbackTexture(context, assets, pack, item, item, reason, resolvedAsset);
+    }
 
-        ItemTexture texture = writeItemTexture(context, pack, fallback.key());
-        if (texture == null) {
-            context.logger().warn("Item {} fallback texture {} is absent from Bedrock output, skipping", item, fallback.key());
-            context.report().outcome("item-missing-output-texture", item.toString());
+    private static boolean tryFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, BedrockResourcePack pack,
+                                              Identifier item, Identifier itemModel, String reason, ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
+        List<TextureFallback> fallbacks = findFallbackTextures(context, assets, item, itemModel, resolvedAsset);
+        if (fallbacks.isEmpty()) return false;
+        for (TextureFallback fallback : fallbacks) {
+            ItemTexture texture = writeItemTexture(context, pack, fallback.key());
+            if (texture == null) continue;
+            pack.addItemTexture(item.toString(), texture.path());
+            context.logger().warn("Item {} {}; using texture fallback", item, reason);
+            context.report().fallback("item-texture");
+            String kind = fallback.rawSource() ? "item-source-texture-fallback" : fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback";
+            context.report().outcome(kind, item.toString());
+            context.report().resolution(kind, item.toString(), texture.source() != null ? texture.source() : fallback.key().toString());
+            reportReason(context, item, fallback.reasonCode());
+            reportSourceRecovery(context, item, texture);
             return true;
         }
-        pack.addItemTexture(item.toString(), texture.path());
-        context.logger().warn("Item {} {}; using texture fallback", item, reason);
-        context.report().fallback("item-texture");
-        String kind = fallback.rawSource() ? "item-source-texture-fallback" : fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback";
-        context.report().outcome(kind, item.toString());
-        context.report().resolution(kind, item.toString(), texture.source() != null ? texture.source() : fallback.key().toString());
-        reportReason(context, item, fallback.reasonCode());
-        reportSourceRecovery(context, item, texture);
+        context.logger().warn("Item {} fallback textures are absent from Bedrock output, skipping", item);
+        context.report().outcome("item-missing-output-texture", item.toString());
+        reportReason(context, item, resolvedAsset.reasonCode());
         return true;
     }
 
@@ -242,22 +262,29 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         context.report().resolution("item-source-texture-recovery", item.toString(), texture.source());
     }
 
-    private static TextureFallback findFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation,
-                                                        ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
-        if (!resolvedAsset.textureLayers().isEmpty()) {
-            return new TextureFallback(resolvedAsset.textureLayers().getFirst(), true, false, resolvedAsset.reasonCode());
+    private static List<TextureFallback> findFallbackTextures(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation,
+                                                               Identifier itemModel, ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
+        Map<Key, TextureFallback> candidates = new LinkedHashMap<>();
+        for (Key layer : resolvedAsset.textureLayers()) {
+            candidates.putIfAbsent(layer, new TextureFallback(layer, false, false, resolvedAsset.reasonCode()));
         }
-        Key texture = findNamedTexture(assets, itemLocation);
-        if (texture != null) return new TextureFallback(texture, false, false, resolvedAsset.reasonCode());
+        for (Identifier location : itemModel.equals(itemLocation) ? List.of(itemLocation) : List.of(itemLocation, itemModel)) {
+            Key texture = findNamedTexture(assets, location);
+            if (texture != null) candidates.putIfAbsent(texture, new TextureFallback(texture, false, false, resolvedAsset.reasonCode()));
 
-        texture = findRawTexture(context, assets, itemLocation);
-        if (texture != null) return new TextureFallback(texture, true, false, resolvedAsset.reasonCode());
+            texture = findRawTexture(context, assets, location);
+            if (texture != null) candidates.putIfAbsent(texture, new TextureFallback(texture, true, false, resolvedAsset.reasonCode()));
+        }
 
         for (String directory : List.of("item", "block")) {
-            texture = Key.key(itemLocation.getNamespace(), directory + "/" + itemLocation.getPath());
-            if (sourceTexture(context.mod(), texture) != null) return new TextureFallback(texture, false, true, resolvedAsset.reasonCode());
+            for (Identifier location : itemModel.equals(itemLocation) ? List.of(itemLocation) : List.of(itemLocation, itemModel)) {
+                Key texture = Key.key(location.getNamespace(), directory + "/" + location.getPath());
+                if (sourceTexture(context.mod(), texture) != null) {
+                    candidates.putIfAbsent(texture, new TextureFallback(texture, false, true, resolvedAsset.reasonCode()));
+                }
+            }
         }
-        return null;
+        return List.copyOf(candidates.values());
     }
 
     private static Key findNamedTexture(ResourcePack assets, Identifier itemLocation) {
@@ -378,6 +405,11 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     private static List<Key> modelLayers(List<ModelTexture> layers) {
         if (layers == null) return List.of();
         return layers.stream().map(ModelTexture::key).filter(java.util.Objects::nonNull).toList();
+    }
+
+    private static Identifier itemModelLocation(Item item, Identifier fallback) {
+        Identifier itemModel = item.components().get(DataComponents.ITEM_MODEL);
+        return itemModel == null ? fallback : itemModel;
     }
 
     private static void reportReason(PackPostProcessContext<?> context, Identifier item, String reason) {

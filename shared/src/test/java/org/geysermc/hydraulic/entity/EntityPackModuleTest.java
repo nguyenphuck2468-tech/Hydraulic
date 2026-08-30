@@ -1,7 +1,9 @@
 package org.geysermc.hydraulic.entity;
 
 import com.google.gson.JsonObject;
+import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Bones;
+import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Description;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.junit.jupiter.api.Test;
 
@@ -50,10 +52,32 @@ class EntityPackModuleTest {
         assertTrue(((String) property(profile, "description")).contains("kind=hitbox"));
     }
 
+    @Test
+    void prefersStaticResourceGeometryOnlyWhenItsIdentifierOrFileMatchesTheEntity() {
+        Geometry matching = geometry(bone("body", null));
+        Description description = new Description();
+        description.identifier("geometry.example.beast");
+        matching.description(description);
+        Geometry unrelated = geometry(bone("body", null));
+        Description unrelatedDescription = new Description();
+        unrelatedDescription.identifier("geometry.example.other");
+        unrelated.description(unrelatedDescription);
+
+        assertEquals(1_000, EntityPackModule.sourceGeometryScore("anything", model(matching), "beast"));
+        assertEquals(900, EntityPackModule.sourceGeometryScore("beast", model(unrelated), "beast"));
+        assertEquals(0, EntityPackModule.sourceGeometryScore("other", model(unrelated), "beast"));
+    }
+
     private static Geometry geometry(Bones... bones) {
         Geometry geometry = new Geometry();
         geometry.bones(List.of(bones));
         return geometry;
+    }
+
+    private static ModelEntity model(Geometry geometry) {
+        ModelEntity model = new ModelEntity();
+        model.geometry(List.of(geometry));
+        return model;
     }
 
     private static Bones bone(String name, String parent) {

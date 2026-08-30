@@ -21,6 +21,7 @@ import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Bones;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,6 +69,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         loadAnimationMappings(context);
         List<TextureAsset> textures = textureAssets(pack);
         List<SourceTextureAsset> sourceTextures = sourceTextureAssets(context.mod());
+        List<SourceGeometryAsset> sourceGeometries = sourceGeometryAssets(context.mod());
 
         for (EntityType<?> type : context.entityTypes()) {
             Identifier key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
@@ -98,6 +100,16 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 context.report().resolution("entity-texture", key.toString(), texture.path());
             }
 
+            if (!hasNativeGeometry(namespace, path, pack)) {
+                SourceGeometryAsset sourceGeometry = findSourceGeometry(namespace, path, sourceGeometries);
+                if (sourceGeometry != null) {
+                    pack.addEntityModel(sourceGeometry.model(), namespace + "." + path + ".json");
+                    context.logger().info("Entity {} has no converted geometry; recovered static resource geometry {}", key, sourceGeometry.source());
+                    context.report().fallback("entity-source-geometry");
+                    context.report().outcome("entity-source-geometry-recovery", key.toString());
+                    context.report().resolution("entity-source-geometry-recovery", key.toString(), sourceGeometry.source());
+                }
+            }
             boolean hitboxFallback = !hasNativeGeometry(namespace, path, pack);
             if (hitboxFallback) {
                 addHitboxGeometry(namespace, path, type.getDimensions(), pack);
@@ -455,7 +467,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
                 String base = location.substring(locationPrefix.length(), location.length() - ".json".length());
                 if (base.equals(path)) {
-                    defaultGeometry = "geometry." + namespace + "." + base;
+                    String identifier = geometryIdentifierFor(entry.getValue(), path);
+                    defaultGeometry = identifier == null ? "geometry." + namespace + "." + base : identifier;
                     fuzzyMatch = null;
                     break;
                 }
@@ -570,7 +583,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             if (!location.startsWith(prefix) || !location.endsWith(".json")) continue;
             String base = location.substring(prefix.length(), location.length() - ".json".length());
             if (base.equals(path) && entry.getValue().geometry() != null && !entry.getValue().geometry().isEmpty()) {
-                return entry.getValue().geometry().getFirst();
+                Geometry matching = geometryFor(entry.getValue(), path);
+                return matching == null ? entry.getValue().geometry().getFirst() : matching;
             }
             Geometry matching = geometryFor(entry.getValue(), path);
             if (matching != null) return matching;
@@ -711,6 +725,70 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         return textures.stream().sorted(Comparator.comparing(SourceTextureAsset::outputPath)).toList();
     }
 
+    /**
+     * Indexes only already-Bedrock geometry resources. Java block models and
+     * renderer source are deliberately excluded: they do not contain enough
+     * transferable geometry to reconstruct a client model safely.
+     */
+    private static List<SourceGeometryAsset> sourceGeometryAssets(ModInfo mod) {
+        List<SourceGeometryAsset> geometries = new ArrayList<>();
+        for (Path root : mod.roots()) {
+            Path assets = root.resolve("assets");
+            if (!Files.isDirectory(assets)) continue;
+            try (Stream<Path> namespaces = Files.list(assets)) {
+                namespaces.filter(Files::isDirectory).forEach(namespace -> {
+                    try (Stream<Path> files = Files.walk(namespace)) {
+                        files.filter(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".geo.json"))
+                                .map(path -> sourceGeometryAsset(namespace.getFileName().toString(), path))
+                                .filter(java.util.Objects::nonNull)
+                                .forEach(geometries::add);
+                    } catch (IOException ignored) {
+                        // A bad optional geometry must not hide the remaining assets in the mod.
+                    }
+                });
+            } catch (IOException ignored) {
+                // A bad resource root is already isolated by the converter path.
+            }
+        }
+        return geometries.stream().sorted(Comparator.comparing(SourceGeometryAsset::source)).toList();
+    }
+
+    private static SourceGeometryAsset sourceGeometryAsset(String namespace, Path source) {
+        try {
+            ModelEntity model = Constants.GSON.fromJson(Files.readString(source, StandardCharsets.UTF_8), ModelEntity.class);
+            if (model == null || model.geometry() == null || model.geometry().isEmpty()) return null;
+            String name = source.getFileName().toString();
+            return new SourceGeometryAsset(namespace, source.toString(), name.substring(0, name.length() - ".geo.json".length()), model);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static SourceGeometryAsset findSourceGeometry(String namespace, String path, List<SourceGeometryAsset> geometries) {
+        SourceGeometryAsset best = null;
+        int bestScore = 0;
+        for (SourceGeometryAsset geometry : geometries) {
+            if (!geometry.namespace().equals(namespace)) continue;
+            int score = sourceGeometryScore(geometry.fileName(), geometry.model(), path);
+            if (score > bestScore) {
+                best = geometry;
+                bestScore = score;
+            }
+        }
+        return best;
+    }
+
+    static int sourceGeometryScore(String fileName, ModelEntity model, String entityPath) {
+        for (Geometry geometry : model.geometry()) {
+            String identifier = geometry.description() == null ? null : geometry.description().identifier();
+            if (identifier != null && (identifier.equals("geometry." + entityPath) || identifier.endsWith("." + entityPath))) {
+                return 1_000;
+            }
+        }
+        if (fileName.equals(entityPath)) return 900;
+        return fileName.startsWith(entityPath + "_") ? 800 : 0;
+    }
+
     private static SourceTextureAsset sourceTextureAsset(String namespace, Path sourceRoot, Path candidate) {
         String name = candidate.getFileName().toString();
         String lower = name.toLowerCase(Locale.ROOT);
@@ -814,6 +892,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     }
 
     private record SourceTextureAsset(Path source, String outputFile, String outputPath, String name, String description) {
+    }
+
+    private record SourceGeometryAsset(String namespace, String source, String fileName, ModelEntity model) {
     }
 
     /**

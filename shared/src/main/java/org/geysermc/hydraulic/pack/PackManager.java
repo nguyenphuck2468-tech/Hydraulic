@@ -282,7 +282,7 @@ public class PackManager {
             return PackCreationResult.FAILED;
         }
         if (packager.metadataOnly()) {
-            LOGGER.info("Skipped metadata-only pack for {}: no converted Bedrock assets", mod.id());
+            cacheMetadataOnlyPack(packPath, fingerprint, mod.id());
             return PackCreationResult.METADATA_ONLY;
         }
         long packagedAt = System.nanoTime();
@@ -298,7 +298,7 @@ public class PackManager {
                 }
                 if (validation.metadataOnly()) {
                     discardStagedPack(stagedPack, mod.id());
-                    LOGGER.info("Discarded metadata-only archive for {} after validation", mod.id());
+                    cacheMetadataOnlyPack(packPath, fingerprint, mod.id());
                     return PackCreationResult.METADATA_ONLY;
                 }
                 if (!validation.warnings().isEmpty()) {
@@ -322,6 +322,7 @@ public class PackManager {
                 LOGGER.info("Conversion timings {} [assets={} ms, package={} ms, validation={} ms]", mod.id(),
                         assetsMillis, packageMillis, validationMillis);
                 publish(stagedPack, packPath);
+                PackListener.deleteMetadataOnlyMarker(packPath);
                 Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(mod.id() + ".json");
                 try {
                     Files.createDirectories(reportPath.getParent());
@@ -350,6 +351,16 @@ public class PackManager {
         }
     }
 
+    private static void cacheMetadataOnlyPack(Path packPath, String fingerprint, String modId) {
+        try {
+            PackListener.writeMetadataOnlyMarker(packPath, fingerprint);
+            Files.deleteIfExists(packPath);
+            LOGGER.info("Cached metadata-only result for {}: no converted Bedrock assets", modId);
+        } catch (IOException exception) {
+            LOGGER.warn("Skipped metadata-only pack for {}, but could not persist its cache marker", modId, exception);
+        }
+    }
+
     Quality qualityFor(String modId) {
         Path report = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(modId + ".json");
         try {
@@ -363,17 +374,11 @@ public class PackManager {
         JsonObject outcomes = report.getAsJsonObject("outcomes");
         if (outcomes == null) return Quality.EMPTY;
         int nativeGeometries = outcome(outcomes, "entity-native-geometry");
-        java.util.Set<String> genericEntities = new java.util.HashSet<>();
-        JsonObject ids = report.getAsJsonObject("outcome_ids");
-        if (ids != null) {
-            for (String kind : List.of("entity-hitbox", "entity-generic-animation", "entity-native-generic-animation")) {
-                if (!ids.has(kind) || !ids.get(kind).isJsonArray()) continue;
-                for (var id : ids.getAsJsonArray(kind)) genericEntities.add(id.getAsString());
-            }
-        }
+        int nativeGenericAnimation = outcome(outcomes, "entity-native-generic-animation");
+        int hitboxFallbacks = outcome(outcomes, "entity-hitbox");
         int unresolvedItems = outcome(outcomes, "item-unresolved") + outcome(outcomes, "item-missing-output-texture")
                 + outcome(outcomes, "item-model-stitch-failed") + outcome(outcomes, "item-model-no-layer");
-        return new Quality(nativeGeometries, genericEntities.size(), unresolvedItems);
+        return new Quality(Math.max(0, nativeGeometries - nativeGenericAnimation), nativeGenericAnimation, hitboxFallbacks, unresolvedItems);
     }
 
     private static int outcome(JsonObject outcomes, String key) {
@@ -394,12 +399,14 @@ public class PackManager {
         FAILED
     }
 
-    record Quality(int nativeGeometries, int genericEntityFallbacks, int unresolvedItemAssets) {
-        static final Quality EMPTY = new Quality(0, 0, 0);
+    record Quality(int fullNativeGeometries, int nativeGeometriesWithGenericAnimation, int hitboxGeometryFallbacks,
+                   int unresolvedItemAssets) {
+        static final Quality EMPTY = new Quality(0, 0, 0, 0);
 
         Quality plus(Quality other) {
-            return new Quality(nativeGeometries + other.nativeGeometries,
-                    genericEntityFallbacks + other.genericEntityFallbacks,
+            return new Quality(fullNativeGeometries + other.fullNativeGeometries,
+                    nativeGeometriesWithGenericAnimation + other.nativeGeometriesWithGenericAnimation,
+                    hitboxGeometryFallbacks + other.hitboxGeometryFallbacks,
                     unresolvedItemAssets + other.unresolvedItemAssets);
         }
     }

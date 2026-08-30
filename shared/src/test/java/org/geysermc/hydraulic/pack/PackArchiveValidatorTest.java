@@ -175,7 +175,7 @@ class PackArchiveValidatorTest {
     }
 
     @Test
-    void summarizesQualityWithoutDoubleCountingHitboxAnimationFallbacks() {
+    void separatesFullNativeGeometryGenericAnimationAndHitboxFallbacks() {
         com.google.gson.JsonObject report = new com.google.gson.JsonObject();
         report.add("outcomes", com.google.gson.JsonParser.parseString("""
                 {"entity-native-geometry":2,"entity-hitbox":1,"entity-generic-animation":1,
@@ -188,8 +188,9 @@ class PackArchiveValidatorTest {
 
         PackManager.Quality quality = PackManager.qualityFromReport(report);
 
-        assertTrue(quality.nativeGeometries() == 2);
-        assertTrue(quality.genericEntityFallbacks() == 2);
+        assertTrue(quality.fullNativeGeometries() == 1);
+        assertTrue(quality.nativeGeometriesWithGenericAnimation() == 1);
+        assertTrue(quality.hitboxGeometryFallbacks() == 1);
         assertTrue(quality.unresolvedItemAssets() == 5);
     }
 

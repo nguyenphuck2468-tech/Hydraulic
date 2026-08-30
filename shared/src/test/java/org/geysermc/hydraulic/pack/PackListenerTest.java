@@ -48,6 +48,30 @@ class PackListenerTest {
     }
 
     @Test
+    void reusesMetadataOnlyResultAcrossRepeatedStartupChecks() throws IOException {
+        String fingerprint = "e5d87397-0931-4609-a849-01b2da7a3529";
+        Path packPath = temporaryDirectory.resolve("empty.mcpack");
+
+        PackListener.writeMetadataOnlyMarker(packPath, fingerprint);
+
+        assertEquals(PackListener.CacheStatus.SKIPPED_EMPTY, PackListener.cacheStatus(packPath, fingerprint));
+        assertEquals(PackListener.CacheStatus.SKIPPED_EMPTY, PackListener.cacheStatus(packPath, fingerprint));
+        assertEquals(PackListener.CacheStatus.CONVERT, PackListener.cacheStatus(packPath,
+                "7190253f-8852-4fed-9a23-8028541152e6"));
+    }
+
+    @Test
+    void realArchiveWinsAfterMetadataOnlyMarkerIsRemoved() throws IOException {
+        String fingerprint = "e5d87397-0931-4609-a849-01b2da7a3529";
+        Path archive = archive("complete.mcpack", fingerprint, true);
+        PackListener.writeMetadataOnlyMarker(archive, fingerprint);
+
+        PackListener.deleteMetadataOnlyMarker(archive);
+
+        assertEquals(PackListener.CacheStatus.REUSE, PackListener.cacheStatus(archive, fingerprint));
+    }
+
+    @Test
     void partArchiveIsNeverReusedOrRegistered() throws IOException {
         String fingerprint = "e5d87397-0931-4609-a849-01b2da7a3529";
         Path archive = archive("complete.mcpack.part", fingerprint, true);

@@ -25,6 +25,13 @@ public class PackPackager implements PackageHandler {
         metadataOnly = !hasPackAssets(path);
         if (metadataOnly) return;
 
+        PackPathRewriter.Result rewritten = PackPathRewriter.rewrite(path);
+        if (rewritten.collision()) {
+            logger.warn("Skipped path shortening because its deterministic target already exists");
+        } else if (rewritten.rewritten() > 0) {
+            logger.info("Shortened " + rewritten.rewritten() + " Bedrock-unsafe asset path(s) with updated JSON references");
+        }
+
         PackageHandler.ZIP.pack(converter, path, outputPath, logger);
     }
 

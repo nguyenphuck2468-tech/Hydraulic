@@ -3,6 +3,7 @@ package org.geysermc.hydraulic.pack;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import net.minecraft.SharedConstants;
 import org.geysermc.event.PostOrder;
@@ -24,6 +25,8 @@ import org.slf4j.Logger;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -126,9 +129,9 @@ public class PackListener {
             LOGGER.error("Failed to plan Hydraulic packs", exception.getCause());
             return;
         }
-        LOGGER.info("Pack planning completed in {} ms [reuse={}, conversion={}]",
+        LOGGER.info("Pack planning completed in {} ms [reuse={}, skipped-empty={}, conversion={}]",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                plan.reusable().size(), plan.toConvert().size());
+                plan.reusable().size(), plan.cachedEmpty().size(), plan.toConvert().size());
 
         for (PackRequest request : plan.reusable()) {
             LOGGER.info("Reusing converted pack for mod {} [revision={}]", request.mod().id(), PackManager.PACK_GENERATION_REVISION);
@@ -161,13 +164,13 @@ public class PackListener {
 
         List<PackResult> completed = awaitCompleted(futures, remainingBudgetMillis(startedAt));
         int registered = 0;
-        int skippedEmpty = 0;
+        int newlySkippedEmpty = 0;
         for (PackResult result : completed) {
             if (result.outcome() == PackManager.PackCreationResult.CREATED) {
                 event.register(ResourcePack.create(PackCodec.path(result.packPath())), PriorityOption.NORMAL);
                 registered++;
             } else if (result.outcome() == PackManager.PackCreationResult.METADATA_ONLY) {
-                skippedEmpty++;
+                newlySkippedEmpty++;
             }
         }
 
@@ -185,7 +188,7 @@ public class PackListener {
 
         LOGGER.info("Registered {} of {} converted packs in {}", registered, packsToLoad.size(),
                 FormatUtil.humanReadableFormat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
-        logSummary(plan, completed, registered, skippedEmpty, unfinishedMods);
+        logSummary(plan, completed, registered, newlySkippedEmpty, unfinishedMods);
     }
 
     private PackPlan planPacks() {
@@ -201,6 +204,7 @@ public class PackListener {
 
         // Go over all mods and load the pack or mark them for conversion
         List<PackRequest> reusable = new ArrayList<>();
+        List<PackRequest> cachedEmpty = new ArrayList<>();
         List<PackRequest> packsToLoad = new ArrayList<>();
         for (ModInfo mod : this.hydraulic.mods()) {
             if (PackManager.IGNORED_MODS.contains(mod.id())) {
@@ -216,13 +220,16 @@ public class PackListener {
 
             Path packPath = storage.pack();
             String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
-            if (this.hydraulic.isDev() || hydraulicUpdated || needsConversion(packPath, fingerprint)) {
-                packsToLoad.add(new PackRequest(mod, packPath, fingerprint));
-            } else {
-                reusable.add(new PackRequest(mod, packPath, fingerprint));
+            PackRequest request = new PackRequest(mod, packPath, fingerprint);
+            CacheStatus status = this.hydraulic.isDev() || hydraulicUpdated
+                    ? CacheStatus.CONVERT : cacheStatus(packPath, fingerprint);
+            switch (status) {
+                case REUSE -> reusable.add(request);
+                case SKIPPED_EMPTY -> cachedEmpty.add(request);
+                case CONVERT -> packsToLoad.add(request);
             }
         }
-        return new PackPlan(reusable, packsToLoad);
+        return new PackPlan(reusable, cachedEmpty, packsToLoad);
     }
 
     /** Waits only within the startup budget, then collects every completed result. */
@@ -303,8 +310,46 @@ public class PackListener {
         }
     }
 
-    private void logSummary(PackPlan plan, List<PackResult> completed, int converted, int skippedEmpty, List<String> deferred) {
-        int detected = plan.reusable().size() + plan.toConvert().size();
+    /** Selects the one startup action allowed for a mod fingerprint. */
+    static CacheStatus cacheStatus(Path packPath, String fingerprint) {
+        if (isCachedMetadataOnly(packPath, fingerprint)) return CacheStatus.SKIPPED_EMPTY;
+        return needsConversion(packPath, fingerprint) ? CacheStatus.CONVERT : CacheStatus.REUSE;
+    }
+
+    static Path metadataOnlyMarkerPath(Path packPath) {
+        return packPath.resolveSibling(packPath.getFileName() + ".empty.json");
+    }
+
+    static void writeMetadataOnlyMarker(Path packPath, String fingerprint) throws IOException {
+        JsonObject marker = new JsonObject();
+        marker.addProperty("revision", PackManager.PACK_GENERATION_REVISION);
+        marker.addProperty("fingerprint", fingerprint);
+        marker.addProperty("outcome", "metadata-only");
+        Path markerPath = metadataOnlyMarkerPath(packPath);
+        Files.createDirectories(markerPath.getParent());
+        Files.writeString(markerPath, marker.toString(), StandardCharsets.UTF_8);
+    }
+
+    static void deleteMetadataOnlyMarker(Path packPath) throws IOException {
+        Files.deleteIfExists(metadataOnlyMarkerPath(packPath));
+    }
+
+    private static boolean isCachedMetadataOnly(Path packPath, String fingerprint) {
+        Path markerPath = metadataOnlyMarkerPath(packPath);
+        try {
+            JsonObject marker = JsonParser.parseString(Files.readString(markerPath, StandardCharsets.UTF_8)).getAsJsonObject();
+            return marker.has("revision")
+                    && PackManager.PACK_GENERATION_REVISION.equals(marker.get("revision").getAsString())
+                    && marker.has("fingerprint") && fingerprint.equals(marker.get("fingerprint").getAsString())
+                    && marker.has("outcome") && "metadata-only".equals(marker.get("outcome").getAsString());
+        } catch (IOException | RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private void logSummary(PackPlan plan, List<PackResult> completed, int converted, int newlySkippedEmpty, List<String> deferred) {
+        int detected = plan.reusable().size() + plan.cachedEmpty().size() + plan.toConvert().size();
+        int skippedEmpty = plan.cachedEmpty().size() + newlySkippedEmpty;
         LOGGER.info("Hydraulic: {} detected | {} reused | {} converted | {} skipped-empty | {} deferred",
                 detected, plan.reusable().size(), converted, skippedEmpty, deferred.size());
         List<PackResult> slowest = completed.stream().sorted(java.util.Comparator.comparingLong(PackResult::millis).reversed()).limit(2).toList();
@@ -316,14 +361,17 @@ public class PackListener {
                         completed.stream().map(PackResult::modId))
                 .map(manager::qualityFor)
                 .reduce(PackManager.Quality.EMPTY, PackManager.Quality::plus);
-        LOGGER.info("Quality: {} native geometries | {} generic entity fallbacks | {} unresolved item assets",
-                quality.nativeGeometries(), quality.genericEntityFallbacks(), quality.unresolvedItemAssets());
+        LOGGER.info("Quality: {} full native geometries | {} native geometries with generic animation | {} hitbox geometry fallbacks | {} unresolved item assets",
+                quality.fullNativeGeometries(), quality.nativeGeometriesWithGenericAnimation(), quality.hitboxGeometryFallbacks(),
+                quality.unresolvedItemAssets());
     }
 
     private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {
     }
 
-    private record PackPlan(List<PackRequest> reusable, List<PackRequest> toConvert) {
+    enum CacheStatus { REUSE, SKIPPED_EMPTY, CONVERT }
+
+    private record PackPlan(List<PackRequest> reusable, List<PackRequest> cachedEmpty, List<PackRequest> toConvert) {
     }
 
     private record PackResult(String modId, Path packPath, PackManager.PackCreationResult outcome, long millis) {

@@ -25,6 +25,13 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    // Java 25 validates type annotations on PackModule's Geyser event generic.
+    // Keep the production dependency compile-only, but make that API available
+    // to test compilation and execution.
+    testImplementation(libs.geyser.core) {
+        exclude(group = "io.netty")
+        exclude(group = "io.netty.incubator")
+    }
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

@@ -49,6 +49,25 @@ class ItemAssetResolverTest {
         assertEquals("unresolved-parent", resolved.reasonCode());
     }
 
+    @Test
+    void followsTheRegisteredItemModelAndBlockstateModel() throws IOException {
+        write("assets/example/items/registered_model.json", "{\"model\":\"example:item/other\"}");
+        write("assets/example/models/item/other.json", "{\"textures\":{\"layer0\":\"example:item/registered\"}}");
+        write("assets/example/blockstates/display_block.json", "{\"variants\":{\"\":{\"model\":\"example:block/display\"}}}");
+        write("assets/example/models/block/display.json", "{\"textures\":{\"all\":\"example:block/display\"}}");
+
+        ItemAssetResolver.ResolvedItemAsset fromItemModel = ItemAssetResolver.resolve(mod(),
+                Identifier.fromNamespaceAndPath("example", "registry_name"),
+                Identifier.fromNamespaceAndPath("example", "registered_model"), null);
+        ItemAssetResolver.ResolvedItemAsset fromBlockState = ItemAssetResolver.resolve(mod(),
+                Identifier.fromNamespaceAndPath("example", "block_item"),
+                Identifier.fromNamespaceAndPath("example", "block_item"),
+                Identifier.fromNamespaceAndPath("example", "display_block"));
+
+        assertEquals(List.of("example:item/registered"), fromItemModel.textureLayers().stream().map(Object::toString).toList());
+        assertEquals(List.of("example:block/display"), fromBlockState.textureLayers().stream().map(Object::toString).toList());
+    }
+
     private ModInfo mod() {
         return new ModInfo("example", "example", "Example", "1", null, List.of(temporaryDirectory));
     }
