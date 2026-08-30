@@ -14,10 +14,8 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -63,11 +61,12 @@ public class PackUtil {
 
     /**
      * Generates a UUID from resource contents and paths relative to each root.
-     * Absolute paths are deliberately excluded so moving a server or its mods
-     * directory does not force needless pack regeneration.
+     * Root order is preserved because later resource roots can override files
+     * from earlier roots. Absolute paths are deliberately excluded so moving a
+     * server or its mods directory does not force needless regeneration.
      */
     public static UUID getModUUID(Collection<Path> modRoots) {
-        final List<byte[]> rootHashes = new ArrayList<>();
+        final HashingOutputStream output = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
 
         for (Path root : modRoots) {
             final HashingOutputStream rootOutput = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
@@ -76,9 +75,14 @@ public class PackUtil {
                         .forEachOrdered(path -> {
                             try {
                                 rootOutput.write(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
+                                rootOutput.write(0);
                                 if (Files.isRegularFile(path)) {
+                                    rootOutput.write(1);
                                     Files.copy(path, rootOutput);
+                                } else {
+                                    rootOutput.write(2);
                                 }
+                                rootOutput.write(0);
                             } catch (IOException exception) {
                                 LOGGER.warn("Failed to hash {}", path, exception);
                             }
@@ -86,19 +90,12 @@ public class PackUtil {
             } catch (IOException exception) {
                 LOGGER.warn("Failed to walk resource root {}", root, exception);
             }
-            rootHashes.add(rootOutput.hash().asBytes());
+            try {
+                output.write(rootOutput.hash().asBytes());
+            } catch (IOException exception) {
+                throw new IllegalStateException("Failed to hash mod resources", exception);
+            }
         }
-
-        final HashingOutputStream output = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
-        rootHashes.stream()
-                .sorted((left, right) -> java.util.Arrays.compareUnsigned(left, right))
-                .forEach(hash -> {
-                    try {
-                        output.write(hash);
-                    } catch (IOException exception) {
-                        throw new IllegalStateException("Failed to hash mod resources", exception);
-                    }
-                });
         return UUID.nameUUIDFromBytes(output.hash().asBytes());
     }
 }
