@@ -28,6 +28,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -327,7 +328,13 @@ public class PackListener {
         marker.addProperty("outcome", "metadata-only");
         Path markerPath = metadataOnlyMarkerPath(packPath);
         Files.createDirectories(markerPath.getParent());
-        Files.writeString(markerPath, marker.toString(), StandardCharsets.UTF_8);
+        Path temporary = markerPath.resolveSibling(markerPath.getFileName() + ".part");
+        Files.writeString(temporary, marker.toString(), StandardCharsets.UTF_8);
+        try {
+            Files.move(temporary, markerPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+            Files.move(temporary, markerPath, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     static void deleteMetadataOnlyMarker(Path packPath) throws IOException {

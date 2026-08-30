@@ -54,6 +54,7 @@ class PackListenerTest {
 
         PackListener.writeMetadataOnlyMarker(packPath, fingerprint);
 
+        assertFalse(Files.exists(PackListener.metadataOnlyMarkerPath(packPath).resolveSibling("empty.mcpack.empty.json.part")));
         assertEquals(PackListener.CacheStatus.SKIPPED_EMPTY, PackListener.cacheStatus(packPath, fingerprint));
         assertEquals(PackListener.CacheStatus.SKIPPED_EMPTY, PackListener.cacheStatus(packPath, fingerprint));
         assertEquals(PackListener.CacheStatus.CONVERT, PackListener.cacheStatus(packPath,
