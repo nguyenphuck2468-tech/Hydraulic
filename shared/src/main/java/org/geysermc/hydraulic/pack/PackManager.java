@@ -25,6 +25,7 @@ import org.geysermc.hydraulic.pack.modules.MetadataPackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.pack.converter.PackConverter;
 import org.geysermc.pack.converter.type.entity.EntityModelScanner;
+import org.geysermc.pack.converter.type.entity.ReflectionInput;
 import org.geysermc.pack.converter.pipeline.AssetConverters;
 import org.geysermc.pack.converter.pipeline.ConverterPipeline;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
@@ -50,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.Arrays;
 import java.util.stream.Stream;
 
 /**
@@ -94,6 +96,7 @@ public class PackManager {
 
     private List<ConverterPipeline<?, ?>> packConverters;
     private ModelStitcher.Provider modelProvider;
+    private Path clientRuntime;
 
     public PackManager(HydraulicImpl hydraulic) {
         this.hydraulic = hydraulic;
@@ -134,16 +137,13 @@ public class PackManager {
 
         // Runtime Java-model extraction needs the unstripped client classes;
         // the vanilla asset cache above intentionally removes them.
-        Path clientRuntime = hydraulic.dataFolder(Constants.MOD_ID).resolve(
+        clientRuntime = hydraulic.dataFolder(Constants.MOD_ID).resolve(
                 "cache/client-runtime-" + SharedConstants.getCurrentVersion().id() + ".jar");
         VanillaPackProvider.createClientRuntime(
                 clientRuntime,
                 SharedConstants.getCurrentVersion().id(),
                 new PackLogListener(LOGGER)
         );
-        if (Files.isRegularFile(clientRuntime)) {
-            System.setProperty("hydraulic.minecraft.merged", clientRuntime.toString());
-        }
 
         modelProvider = createModelProvider(mods, modPacks, this.getVanillaPath());
 
@@ -218,6 +218,7 @@ public class PackManager {
                 .textureSubdirectory(mod.namespace())
                 .reflectionEntityIds(this.modsToEntities.get(mod.id()).stream()
                         .map(type -> BuiltInRegistries.ENTITY_TYPE.getKey(type).toString()).toList())
+                .reflectionInput(reflectionInput(mod))
                 .packageHandler(packager);
 
         converter.postProcessor((javaPack, bedrockPack) -> {
@@ -391,6 +392,19 @@ public class PackManager {
         } catch (IOException exception) {
             LOGGER.warn("Could not remove incomplete staged pack for {} at {}", modId, stagedPack, exception);
         }
+    }
+
+    private ReflectionInput reflectionInput(ModInfo mod) {
+        Path sourceJar = mod.sourceJar();
+        if (sourceJar == null) return null;
+        List<Path> classpath = new ArrayList<>();
+        for (ModInfo installed : hydraulic.mods()) {
+            Path jar = installed.sourceJar();
+            if (jar != null) classpath.add(jar);
+        }
+        Arrays.stream(System.getProperty("java.class.path", "").split(java.io.File.pathSeparator))
+                .map(Path::of).filter(Files::isRegularFile).forEach(classpath::add);
+        return new ReflectionInput(sourceJar, classpath, Files.isRegularFile(clientRuntime) ? clientRuntime : null);
     }
 
     enum PackCreationResult {

@@ -26,6 +26,23 @@ public record ModInfo(
         return null;
     }
 
+    /** Returns the loader's exact source jar when these roots were mounted from one. */
+    @Nullable
+    public Path sourceJar() {
+        for (Path root : roots) {
+            if (Files.isRegularFile(root)) return root;
+            if ("jar".equals(root.getFileSystem().provider().getScheme())) {
+                try {
+                    Path jar = Path.of(root.getFileSystem().toString());
+                    if (Files.isRegularFile(jar)) return jar;
+                } catch (RuntimeException ignored) {
+                    // Development directories have no source jar to reflect.
+                }
+            }
+        }
+        return null;
+    }
+
     @Override
     public boolean equals(Object obj) {
         return obj instanceof ModInfo other && id.equals(other.id);
