@@ -103,7 +103,7 @@ class PackArchiveValidatorTest {
 
         assertTrue(json.getAsJsonObject("outcome_ids").getAsJsonArray("entity-hitbox").contains(new com.google.gson.JsonPrimitive("example:beast")));
         assertTrue(json.getAsJsonObject("asset_resolutions").getAsJsonObject("entity-texture").get("example:beast").getAsString().endsWith("/beast"));
-        assertTrue(json.getAsJsonArray("validation_warnings").getFirst().getAsString().startsWith("missing atlas texture"));
+        assertTrue(json.getAsJsonArray("validation_warnings").get(0).getAsString().startsWith("missing atlas texture"));
         assertTrue(json.getAsJsonObject("timings_ms").get("package").getAsLong() == 34);
     }
 
