@@ -18,6 +18,7 @@ import org.geysermc.hydraulic.util.GeoUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
+import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Bones;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
@@ -106,14 +107,18 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             } else {
                 context.report().outcome("entity-native-geometry", key.toString());
             }
+            GeometryProfile geometryProfile = geometryProfile(namespace, path, pack, hitboxFallback);
+            context.report().outcome("entity-geometry-" + geometryProfile.kind().reportName(), key.toString());
+            context.report().resolution("entity-geometry-profile", key.toString(), geometryProfile.description());
             JsonObject animations = collectAnimations(namespace, path, pack);
-            String animationBone = hitboxFallback ? "bone_0" : rootBone(namespace, path, pack);
-            if (animations.size() == 0 && animationBone != null) {
-                animations = fallbackAnimations(namespace, path, animationBone);
+            if (animations.size() == 0 && geometryProfile.anchorBone() != null) {
+                animations = fallbackAnimations(namespace, path, geometryProfile);
                 pack.addExtraFile(animationFile(animations), "animations/" + namespace + "." + path + ".animation.json");
-                context.logger().warn("Entity {} has no converted animation; using generic idle/walk fallback", key);
+                context.logger().warn("Entity {} has no converted animation; using {} generic idle/walk fallback", key,
+                        geometryProfile.kind().reportName());
                 context.report().fallback("entity-animation");
                 context.report().outcome(hitboxFallback ? "entity-generic-animation" : "entity-native-generic-animation", key.toString());
+                context.report().resolution("entity-generic-animation", key.toString(), geometryProfile.description());
             } else if (animations.size() > 0) {
                 context.report().outcome("entity-native-animation", key.toString());
             }
@@ -281,21 +286,34 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         return new AnimationRefs(idle, walk);
     }
 
-    static JsonObject fallbackAnimations(String namespace, String path, String bone) {
+    static JsonObject fallbackAnimations(String namespace, String path, GeometryProfile profile) {
         String prefix = "animation." + namespace + "." + path;
         JsonObject idle = new JsonObject();
         idle.addProperty("loop", true);
-        idle.add("bones", boneAnimation(bone, "math.sin(query.life_time * 3.0) * 0.25", null));
+        JsonObject idleBones = new JsonObject();
+        addBoneAnimation(idleBones, profile.anchorBone(), "math.sin(query.life_time * 3.0) * 0.25", null);
+        idle.add("bones", idleBones);
         JsonObject walk = new JsonObject();
         walk.addProperty("loop", true);
-        walk.add("bones", boneAnimation(bone, null, "math.sin(query.life_time * 12.0) * 4.0"));
+        JsonObject walkBones = new JsonObject();
+        int index = 0;
+        for (String bone : profile.motionBones()) {
+            String direction = index++ % 2 == 0 ? "" : "-";
+            addBoneAnimation(walkBones, bone, null,
+                    direction + "math.sin(query.life_time * 12.0) * " + profile.kind().walkAmplitude());
+        }
+        if (walkBones.size() == 0) {
+            addBoneAnimation(walkBones, profile.anchorBone(), null,
+                    "math.sin(query.life_time * 12.0) * " + profile.kind().walkAmplitude());
+        }
+        walk.add("bones", walkBones);
         JsonObject animations = new JsonObject();
         animations.add(prefix + ".idle", idle);
         animations.add(prefix + ".walk", walk);
         return animations;
     }
 
-    private static JsonObject boneAnimation(String name, String y, String xRotation) {
+    private static void addBoneAnimation(JsonObject bones, String name, String y, String xRotation) {
         JsonObject bone = new JsonObject();
         if (y != null) {
             JsonArray position = new JsonArray();
@@ -307,21 +325,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             rotation.add(xRotation); rotation.add(0); rotation.add(0);
             bone.add("rotation", rotation);
         }
-        JsonObject bones = new JsonObject();
         bones.add(name, bone);
-        return bones;
-    }
-
-    private static String rootBone(String namespace, String path, BedrockResourcePack pack) {
-        if (pack.entityModels() == null) return null;
-        String prefix = "models/entity/" + namespace + ".";
-        for (Map.Entry<String, ModelEntity> entry : pack.entityModels().entrySet()) {
-            if (!entry.getKey().startsWith(prefix) || geometryIdentifierFor(entry.getValue(), path) == null) continue;
-            for (Geometry geometry : entry.getValue().geometry()) {
-                if (geometry.bones() != null && !geometry.bones().isEmpty()) return geometry.bones().getFirst().name();
-            }
-        }
-        return null;
     }
 
     private static JsonObject animationFile(JsonObject animations) {
@@ -388,6 +392,36 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     private record AnimationRefs(String idle, String walk) {
     }
 
+    record GeometryProfile(GeometryKind kind, String anchorBone, List<String> motionBones, int boneCount) {
+        String description() {
+            return "kind=" + kind.reportName() + ", bones=" + boneCount + ", anchor=" + anchorBone
+                    + ", motion_bones=" + String.join(",", motionBones);
+        }
+    }
+
+    enum GeometryKind {
+        HITBOX("hitbox", 4),
+        STATIC("static", 4),
+        FRAGMENTED("fragmented", 6),
+        SKELETAL("skeletal", 8);
+
+        private final String reportName;
+        private final int walkAmplitude;
+
+        GeometryKind(String reportName, int walkAmplitude) {
+            this.reportName = reportName;
+            this.walkAmplitude = walkAmplitude;
+        }
+
+        String reportName() {
+            return reportName;
+        }
+
+        int walkAmplitude() {
+            return walkAmplitude;
+        }
+    }
+
     private JsonObject clientEntityDescription(JsonObject description) {
         JsonObject wrapper = new JsonObject();
         wrapper.add("description", description);
@@ -402,15 +436,10 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * most GeckoLib mods name models after the entity inside the file rather
      * than in the file name.
      *
-     * <p><b>Fallback:</b> if the mod never ships a static geometry in the
-     * first place (Fabric-only mods whose models are generated at runtime
-     * with no raw .geo.json on disk - e.g. Alex's Mobs), every lookup
-     * here will return null and the entity would otherwise be invisible
-     * on Bedrock. To make those mobs at least show up, fall back to
-     * vanilla Bedrock geometry references chosen by entity size: small
-     * mobs get a humanoid, four-legged mobs get a quadruped skeleton,
-     * etc. The model is generic but visible, which is strictly better
-     * than a silent no-render.</p>
+     * <p><b>Fallback:</b> if a mod only builds its model at Java runtime and
+     * ships no transferable geometry, a pack-owned hitbox silhouette is added
+     * from the entity dimensions. This keeps the entity visible without
+     * depending on a particular vanilla geometry or mod naming rule.</p>
      */
     private JsonObject collectGeometries(String namespace, String path, EntityDimensions dimensions, BedrockResourcePack pack) {
         JsonObject geometries = new JsonObject();
@@ -478,20 +507,75 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         return "geometry.humanoid.custom";
     }
 
+    private static GeometryProfile geometryProfile(String namespace, String path, BedrockResourcePack pack, boolean hitboxFallback) {
+        return classifyGeometry(geometryFor(namespace, path, pack), hitboxFallback);
+    }
+
+    /**
+     * Classifies transferable geometry only by bone structure. It never relies
+     * on mod ids or bone naming conventions: a parent chain is skeletal,
+     * several independent bones are fragmented, and one bone is static.
+     */
+    static GeometryProfile classifyGeometry(Geometry geometry, boolean hitboxFallback) {
+        List<Bones> bones = geometry == null || geometry.bones() == null ? List.of() : geometry.bones();
+        Map<String, List<String>> children = new HashMap<>();
+        Map<String, Bones> byName = new HashMap<>();
+        for (Bones bone : bones) {
+            if (bone.name() != null) byName.put(bone.name(), bone);
+        }
+
+        List<String> roots = new ArrayList<>();
+        boolean hierarchy = false;
+        for (Bones bone : bones) {
+            String name = bone.name();
+            if (name == null) continue;
+            if (bone.parent() == null || !byName.containsKey(bone.parent())) {
+                roots.add(name);
+            } else {
+                hierarchy = true;
+                children.computeIfAbsent(bone.parent(), ignored -> new ArrayList<>()).add(name);
+            }
+        }
+        String anchor = roots.isEmpty() ? (byName.isEmpty() ? null : byName.keySet().iterator().next()) : roots.getFirst();
+        List<String> motionBones = new ArrayList<>();
+        if (hierarchy) {
+            for (String name : byName.keySet()) {
+                if (!name.equals(anchor) && children.getOrDefault(name, List.of()).isEmpty()) {
+                    motionBones.add(name);
+                }
+            }
+        } else {
+            for (String name : byName.keySet()) {
+                if (!name.equals(anchor)) motionBones.add(name);
+            }
+        }
+        if (motionBones.isEmpty() && anchor != null) motionBones.add(anchor);
+        motionBones = motionBones.stream().sorted().limit(4).toList();
+
+        GeometryKind kind = hitboxFallback ? GeometryKind.HITBOX
+                : hierarchy ? GeometryKind.SKELETAL
+                : bones.size() > 1 ? GeometryKind.FRAGMENTED : GeometryKind.STATIC;
+        return new GeometryProfile(kind, anchor, motionBones, bones.size());
+    }
+
     private static boolean hasNativeGeometry(String namespace, String path, BedrockResourcePack pack) {
-        if (pack.entityModels() == null) return false;
+        return geometryFor(namespace, path, pack) != null;
+    }
+
+    private static Geometry geometryFor(String namespace, String path, BedrockResourcePack pack) {
+        if (pack.entityModels() == null) return null;
         String prefix = "models/entity/" + namespace + ".";
         for (Map.Entry<String, ModelEntity> entry : pack.entityModels().entrySet()) {
             String location = entry.getKey();
             if (!location.startsWith(prefix) || !location.endsWith(".json")) continue;
             String base = location.substring(prefix.length(), location.length() - ".json".length());
-            // A sibling variant such as `void_worm_shot` is not the default
-            // geometry for `void_worm`; it remains a variant in the entity JSON.
-            if (base.equals(path) || geometryIdentifierFor(entry.getValue(), path) != null) {
-                return true;
+            if (base.equals(path) && entry.getValue().geometry() != null && !entry.getValue().geometry().isEmpty()) {
+                return entry.getValue().geometry().getFirst();
             }
+            Geometry matching = geometryFor(entry.getValue(), path);
+            if (matching != null) return matching;
         }
-        return false;
+        return null;
     }
 
     /**
@@ -554,15 +638,20 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
     /**
      * Looks for a geometry whose identifier ends in the entity name, e.g.
-     * {@code geometry.alexsmobs.grizzly_bear} for entity {@code grizzly_bear}.
+     * {@code geometry.example.beast} for entity {@code beast}.
      */
     private static String geometryIdentifierFor(ModelEntity model, String path) {
+        Geometry geometry = geometryFor(model, path);
+        return geometry == null || geometry.description() == null ? null : geometry.description().identifier();
+    }
+
+    private static Geometry geometryFor(ModelEntity model, String path) {
         if (model.geometry() == null) return null;
         String suffix = "." + path;
         for (Geometry geometry : model.geometry()) {
             String identifier = geometry.description() != null ? geometry.description().identifier() : null;
             if (identifier != null && (identifier.equals("geometry." + path) || identifier.endsWith(suffix))) {
-                return identifier;
+                return geometry;
             }
         }
         return null;
