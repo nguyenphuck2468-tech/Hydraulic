@@ -327,7 +327,7 @@ public class PackManager {
                 Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(mod.id() + ".json");
                 try {
                     Files.createDirectories(reportPath.getParent());
-                    Files.writeString(reportPath, report.json(blockCount, itemCount, entityCount, archiveBytes).toString(), StandardCharsets.UTF_8);
+                    writeStringAtomically(reportPath, report.json(blockCount, itemCount, entityCount, archiveBytes).toString());
                 } catch (IOException exception) {
                     LOGGER.warn("Could not write conversion report for {}", mod.id(), exception);
                 }
@@ -349,6 +349,16 @@ public class PackManager {
             Files.move(stagedPack, packPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException ignored) {
             Files.move(stagedPack, packPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    static void writeStringAtomically(Path target, String contents) throws IOException {
+        Path temporary = target.resolveSibling(target.getFileName() + ".part");
+        Files.writeString(temporary, contents, StandardCharsets.UTF_8);
+        try {
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException ignored) {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

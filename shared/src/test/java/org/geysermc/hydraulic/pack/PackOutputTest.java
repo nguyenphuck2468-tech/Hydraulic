@@ -26,4 +26,15 @@ class PackOutputTest {
         assertEquals("complete", Files.readString(output));
         assertFalse(Files.exists(staged));
     }
+
+    @Test
+    void replacesReportOnlyAfterWritingItsTemporaryFile() throws IOException {
+        Path report = temporaryDirectory.resolve("report.json");
+        Files.writeString(report, "previous");
+
+        PackManager.writeStringAtomically(report, "complete");
+
+        assertEquals("complete", Files.readString(report));
+        assertFalse(Files.exists(report.resolveSibling("report.json.part")));
+    }
 }

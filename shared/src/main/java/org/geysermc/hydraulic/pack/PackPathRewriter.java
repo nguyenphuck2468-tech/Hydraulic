@@ -113,7 +113,7 @@ final class PackPathRewriter {
                 throw new IOException("Unrewritten path reference in " + root.relativize(source));
             }
             Path target = moves.getOrDefault(source, source);
-            rewrites.add(new JsonRewrite(target, original, json.toString().getBytes(StandardCharsets.UTF_8)));
+            rewrites.add(new JsonRewrite(source, target, original, json.toString().getBytes(StandardCharsets.UTF_8)));
         }
         return new JsonPlan(rewrites, references);
     }
@@ -165,23 +165,32 @@ final class PackPathRewriter {
 
     private static void apply(Map<Path, Path> moves, List<JsonRewrite> rewrites) throws IOException {
         List<Map.Entry<Path, Path>> completedMoves = new ArrayList<>();
-        List<JsonRewrite> written = new ArrayList<>();
+        List<PreparedRewrite> prepared = new ArrayList<>();
+        List<JsonRewrite> published = new ArrayList<>();
         try {
+            for (JsonRewrite rewrite : rewrites) {
+                Files.createDirectories(rewrite.target().getParent());
+                Path temporary = rewrite.target().resolveSibling(rewrite.target().getFileName() + ".part");
+                Files.deleteIfExists(temporary);
+                Files.write(temporary, rewrite.rewritten());
+                prepared.add(new PreparedRewrite(rewrite, temporary));
+            }
             for (Map.Entry<Path, Path> move : moves.entrySet()) {
                 Files.createDirectories(move.getValue().getParent());
                 move(move.getKey(), move.getValue());
                 completedMoves.add(move);
             }
-            for (JsonRewrite rewrite : rewrites) {
-                Files.write(rewrite.target(), rewrite.rewritten());
-                written.add(rewrite);
+            for (PreparedRewrite rewrite : prepared) {
+                replace(rewrite.temporary(), rewrite.rewrite().target());
+                published.add(rewrite.rewrite());
             }
         } catch (IOException exception) {
-            for (JsonRewrite rewrite : written) Files.write(rewrite.target(), rewrite.original());
             for (int index = completedMoves.size() - 1; index >= 0; index--) {
                 Map.Entry<Path, Path> move = completedMoves.get(index);
                 move(move.getValue(), move.getKey());
             }
+            for (JsonRewrite rewrite : published) PackManager.writeStringAtomically(rewrite.source(), new String(rewrite.original(), StandardCharsets.UTF_8));
+            for (PreparedRewrite rewrite : prepared) Files.deleteIfExists(rewrite.temporary());
             throw exception;
         }
     }
@@ -199,10 +208,21 @@ final class PackPathRewriter {
         }
     }
 
+    private static void replace(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException ignored) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
     private record MovePlan(Map<Path, Path> moves, boolean collision) {
     }
 
-    private record JsonRewrite(Path target, byte[] original, byte[] rewritten) {
+    private record JsonRewrite(Path source, Path target, byte[] original, byte[] rewritten) {
+    }
+
+    private record PreparedRewrite(JsonRewrite rewrite, Path temporary) {
     }
 
     private record JsonPlan(List<JsonRewrite> rewrites, Set<String> references) {
