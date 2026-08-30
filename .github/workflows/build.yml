@@ -98,6 +98,7 @@ jobs:
           appPrivateKey: ${{ secrets.RELEASE_APP_PK }}
           files: |
             fabric:fabric/build/libs/hydraulic-fabric.jar
+            neoforge:neoforge/build/libs/hydraulic-neoforge.jar
           releaseEnabled: false
           saveMetadata: true
           releaseProject: 'hydraulic'
@@ -112,6 +113,7 @@ jobs:
           host: ${{ secrets.DOWNLOADS_SERVER_IP }}
           files: |
             fabric/build/libs/hydraulic-fabric.jar
+            neoforge/build/libs/hydraulic-neoforge.jar
           changelog: ${{ steps.metadata.outputs.body }}
 
       - name: Notify Discord
