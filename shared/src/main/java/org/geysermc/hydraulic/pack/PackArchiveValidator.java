@@ -87,7 +87,7 @@ public final class PackArchiveValidator {
                 }
             }
         }
-        return new Result(files, assetFiles, List.copyOf(errors), List.copyOf(warnings));
+        return new Result(files, assetFiles, List.copyOf(errors), List.copyOf(warnings), classify(errors, warnings));
     }
 
     static boolean hasAssets(ZipFile zip) {
@@ -201,6 +201,40 @@ public final class PackArchiveValidator {
         return values;
     }
 
+    private static List<Finding> classify(List<String> errors, List<String> warnings) {
+        List<Finding> findings = new ArrayList<>();
+        for (String error : errors) findings.add(finding(error, Severity.ERROR));
+        for (String warning : warnings) findings.add(finding(warning, severityForWarning(warning)));
+        return List.copyOf(findings);
+    }
+
+    private static Severity severityForWarning(String warning) {
+        if (warning.contains("textures/atlas/") || warning.contains("minecraft:/atlas") || warning.contains("minecraft:atlas")) {
+            return Severity.INFO;
+        }
+        if (warning.startsWith("missing atlas texture")) return Severity.ERROR;
+        return Severity.WARNING;
+    }
+
+    private static Finding finding(String message, Severity severity) {
+        String code = message.startsWith("missing manifest") ? "broken-manifest"
+                : message.startsWith("invalid JSON") ? "invalid-json"
+                : message.startsWith("missing entity geometry") ? "broken-geometry-link"
+                : message.startsWith("missing entity animation") || message.startsWith("missing animation controller") ? "broken-animation-link"
+                : message.startsWith("missing atlas texture") ? "broken-texture-link"
+                : message.startsWith("missing entity texture") ? "missing-mod-texture"
+                : message.startsWith("long path") ? "bedrock-path-limit" : "validation";
+        String resource = resource(message);
+        return new Finding(severity, code, resource, message);
+    }
+
+    private static String resource(String message) {
+        int start = message.indexOf(' ');
+        String value = start < 0 ? message : message.substring(start + 1);
+        int arrow = value.indexOf(" -> ");
+        return arrow < 0 ? value : value.substring(0, arrow);
+    }
+
     private record EntityReferences(String file, String namespace, List<String> textures, List<String> geometries,
                                     List<String> animations, List<String> animationControllers) {
     }
@@ -208,7 +242,7 @@ public final class PackArchiveValidator {
     private record AtlasReferences(String file, String key, List<String> textures) {
     }
 
-    public record Result(int files, int assetFiles, List<String> errors, List<String> warnings) {
+    public record Result(int files, int assetFiles, List<String> errors, List<String> warnings, List<Finding> findings) {
         public boolean valid() {
             return errors.isEmpty();
         }
@@ -216,5 +250,10 @@ public final class PackArchiveValidator {
         public boolean metadataOnly() {
             return assetFiles == 0;
         }
+    }
+
+    public enum Severity { INFO, WARNING, ERROR }
+
+    public record Finding(Severity severity, String code, String resource, String message) {
     }
 }

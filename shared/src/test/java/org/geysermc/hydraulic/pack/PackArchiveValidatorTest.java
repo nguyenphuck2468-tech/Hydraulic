@@ -109,6 +109,23 @@ class PackArchiveValidatorTest {
 
         assertTrue(result.valid());
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing atlas texture")));
+        assertTrue(result.findings().stream().anyMatch(finding -> finding.code().equals("broken-texture-link")
+                && finding.severity() == PackArchiveValidator.Severity.ERROR));
+    }
+
+    @Test
+    void filtersVanillaAtlasReferencesToInfo() throws IOException {
+        Path archive = temporaryDirectory.resolve("vanilla-atlas.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "textures/item_texture.json", "{\"texture_data\":{\"example:atlas\":{\"textures\":[\"textures/atlas/blocks\"]}}}");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertTrue(result.findings().stream().anyMatch(finding -> finding.severity() == PackArchiveValidator.Severity.INFO
+                && finding.message().contains("textures/atlas/blocks")));
     }
 
     @Test

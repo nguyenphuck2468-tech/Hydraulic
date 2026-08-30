@@ -248,6 +248,11 @@ public class PackManager {
             Files.deleteIfExists(stagedPack);
 
             for (final Path root : mod.roots()) {
+                for (SourceResourceValidator.Finding finding : SourceResourceValidator.validate(root)) {
+                    LOGGER.warn("Isolated malformed source resource for {}: {}", mod.id(), finding.description());
+                    report.outcome("resource-isolated", finding.resource());
+                    report.resolution("resource-diagnostics", finding.resource(), finding.description());
+                }
                 long rootStartedAt = System.nanoTime();
                 converter.input(root, false).convert();
                 List<EntityModelScanner.Diagnostic> diagnostics = converter.entityModelDiagnostics();
