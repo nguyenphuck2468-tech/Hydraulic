@@ -33,6 +33,9 @@ import team.unnamed.creative.item.*;
 import team.unnamed.creative.model.Model;
 import team.unnamed.creative.model.ModelTexture;
 
+import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.util.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -152,6 +155,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         PackLogListener packLogListener = new PackLogListener(context.logger());
         for (Item item : items) {
             Identifier itemLocation = BuiltInRegistries.ITEM.getKey(item);
+            ItemAssetResolver.ResolvedItemAsset resolvedAsset = ItemAssetResolver.resolve(context.mod(), itemLocation);
 
             Model baseModel = assets.model(Key.key(itemLocation.getNamespace(), "item/" + itemLocation.getPath()));
             if (baseModel == null && item instanceof BlockItem) {
@@ -160,58 +164,58 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 baseModel = assets.model(Key.key(itemLocation.getNamespace(), "block/" + itemLocation.getPath()));
             }
             if (baseModel == null) {
-                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "has no item model")) {
+                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "has no item model", resolvedAsset)) {
                     context.logger().warn("Item {} has no item model or texture, skipping", itemLocation);
                     context.report().outcome("item-unresolved", itemLocation.toString());
+                    reportReason(context, itemLocation, "missing-model");
                 }
                 continue;
             }
 
             Model model = new ModelStitcher(context.modelProvider(), baseModel, packLogListener).stitch();
             if (model == null) {
-                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "model could not be stitched")) {
+                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "model could not be stitched", resolvedAsset)) {
                     context.logger().warn("Item {} model could not be stitched and has no texture fallback, skipping", itemLocation);
                     context.report().outcome("item-model-stitch-failed", itemLocation.toString());
+                    reportReason(context, itemLocation, resolvedAsset.reasonCode().equals("layered-texture") ? "unresolved-parent" : resolvedAsset.reasonCode());
                 }
                 continue;
             }
 
             List<ModelTexture> layers = model.textures().layers();
-            if (layers == null || layers.isEmpty()) {
-                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "has no layer0 texture")) {
+            List<Key> textureLayers = resolvedAsset.textureLayers().isEmpty() ? modelLayers(layers) : resolvedAsset.textureLayers();
+            if (textureLayers.isEmpty()) {
+                if (!tryFallbackTexture(context, assets, bedrockPack, itemLocation, "has no layer texture", resolvedAsset)) {
                     // Block items can intentionally use block geometry, but they
                     // still need an outcome so coverage reports remain complete.
                     if (!(item instanceof BlockItem)) {
                         context.logger().warn("Item {} has no layer0 texture, skipping", itemLocation);
                     }
                     context.report().outcome(item instanceof BlockItem ? "item-block-model-no-layer" : "item-model-no-layer", itemLocation.toString());
+                    reportReason(context, itemLocation, "missing-texture");
                 }
                 continue;
             }
 
-            ModelTexture layer0 = layers.getFirst();
-            Key textureKey = layer0.key();
-            if (textureKey == null) {
-                context.logger().warn("Item {} has a layer0 without a texture key, skipping", itemLocation);
-                context.report().outcome("item-model-null-texture", itemLocation.toString());
-                continue;
-            }
-            ItemTexture texture = writeItemTexture(context, bedrockPack, textureKey);
+            ItemTexture texture = writeItemTexture(context, bedrockPack, itemLocation, textureLayers);
             if (texture == null) {
-                context.logger().warn("Item {} model texture {} is absent from Bedrock output, skipping", itemLocation, textureKey);
+                context.logger().warn("Item {} model texture {} is absent from Bedrock output, skipping", itemLocation, textureLayers.getFirst());
                 context.report().outcome("item-missing-output-texture", itemLocation.toString());
+                reportReason(context, itemLocation, "missing-texture");
                 continue;
             }
             bedrockPack.addItemTexture(itemLocation.toString(), texture.path());
-            context.report().outcome("item-direct-model", itemLocation.toString());
-            context.report().resolution("item-direct-model", itemLocation.toString(), textureKey.toString());
+            String outcome = textureLayers.size() > 1 ? "item-layered-model" : "item-direct-model";
+            context.report().outcome(outcome, itemLocation.toString());
+            context.report().resolution(outcome, itemLocation.toString(), textureLayers.toString());
+            reportReason(context, itemLocation, resolvedAsset.reasonCode());
             reportSourceRecovery(context, itemLocation, texture);
         }
     }
 
     private static boolean tryFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, BedrockResourcePack pack,
-                                              Identifier item, String reason) {
-        TextureFallback fallback = findFallbackTexture(context, assets, item);
+                                              Identifier item, String reason, ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
+        TextureFallback fallback = findFallbackTexture(context, assets, item, resolvedAsset);
         if (fallback == null) return false;
 
         ItemTexture texture = writeItemTexture(context, pack, fallback.key());
@@ -226,6 +230,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         String kind = fallback.rawSource() ? "item-source-texture-fallback" : fallback.rawRenderer() ? "item-raw-renderer-fallback" : "item-texture-fallback";
         context.report().outcome(kind, item.toString());
         context.report().resolution(kind, item.toString(), texture.source() != null ? texture.source() : fallback.key().toString());
+        reportReason(context, item, fallback.reasonCode());
         reportSourceRecovery(context, item, texture);
         return true;
     }
@@ -237,16 +242,20 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         context.report().resolution("item-source-texture-recovery", item.toString(), texture.source());
     }
 
-    private static TextureFallback findFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation) {
+    private static TextureFallback findFallbackTexture(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation,
+                                                        ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
+        if (!resolvedAsset.textureLayers().isEmpty()) {
+            return new TextureFallback(resolvedAsset.textureLayers().getFirst(), true, false, resolvedAsset.reasonCode());
+        }
         Key texture = findNamedTexture(assets, itemLocation);
-        if (texture != null) return new TextureFallback(texture, false, false);
+        if (texture != null) return new TextureFallback(texture, false, false, resolvedAsset.reasonCode());
 
         texture = findRawTexture(context, assets, itemLocation);
-        if (texture != null) return new TextureFallback(texture, true, false);
+        if (texture != null) return new TextureFallback(texture, true, false, resolvedAsset.reasonCode());
 
         for (String directory : List.of("item", "block")) {
             texture = Key.key(itemLocation.getNamespace(), directory + "/" + itemLocation.getPath());
-            if (sourceTexture(context.mod(), texture) != null) return new TextureFallback(texture, false, true);
+            if (sourceTexture(context.mod(), texture) != null) return new TextureFallback(texture, false, true, resolvedAsset.reasonCode());
         }
         return null;
     }
@@ -285,6 +294,44 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     }
 
     /** Ensures the texture reference added to Geyser points at a real pack file. */
+    private static ItemTexture writeItemTexture(PackPostProcessContext<?> context, BedrockResourcePack pack, Identifier item, List<Key> layers) {
+        ItemTexture base = writeItemTexture(context, pack, layers.getFirst());
+        if (base == null || layers.size() == 1) return base;
+
+        List<BufferedImage> images = new ArrayList<>();
+        for (Key layer : layers) {
+            ItemTexture written = writeItemTexture(context, pack, layer);
+            if (written == null) return base;
+            Path imagePath = imagePath(context, pack, layer);
+            if (imagePath == null) return base;
+            try {
+                BufferedImage image = ImageIO.read(imagePath.toFile());
+                if (image == null) return base;
+                images.add(image);
+            } catch (Exception ignored) {
+                return base;
+            }
+        }
+        int width = images.stream().mapToInt(BufferedImage::getWidth).max().orElse(0);
+        int height = images.stream().mapToInt(BufferedImage::getHeight).max().orElse(0);
+        if (width == 0 || height == 0) return base;
+
+        String safeName = item.getNamespace() + "_" + item.getPath().replace('/', '_');
+        String outputFile = "textures/items/" + context.mod().id() + "/_hydraulic/" + safeName + ".png";
+        try {
+            Path output = pack.directory().resolve(outputFile);
+            Files.createDirectories(output.getParent());
+            BufferedImage combined = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = combined.createGraphics();
+            for (BufferedImage image : images) graphics.drawImage(image, 0, 0, null);
+            graphics.dispose();
+            ImageIO.write(combined, "PNG", output.toFile());
+            return new ItemTexture(outputFile.substring(0, outputFile.lastIndexOf('.')), null);
+        } catch (Exception ignored) {
+            return base;
+        }
+    }
+
     private static ItemTexture writeItemTexture(PackPostProcessContext<?> context, BedrockResourcePack pack, Key key) {
         String outputFile = getOutputFromModel(context, key);
         Path output = pack.directory().resolve(outputFile);
@@ -304,6 +351,13 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         }
     }
 
+    private static Path imagePath(PackPostProcessContext<?> context, BedrockResourcePack pack, Key key) {
+        Path output = pack.directory().resolve(getOutputFromModel(context, key));
+        if (Files.isRegularFile(output)) return output;
+        Path tga = withExtension(output, ".tga");
+        return Files.isRegularFile(tga) ? tga : null;
+    }
+
     private static Path sourceTexture(ModInfo mod, Key key) {
         if (key.namespace().equals(Key.MINECRAFT_NAMESPACE)) return null;
         String source = "assets/" + key.namespace() + "/textures/" + key.value();
@@ -321,7 +375,16 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         return name.substring(name.lastIndexOf('.'));
     }
 
-    private record TextureFallback(Key key, boolean rawRenderer, boolean rawSource) {
+    private static List<Key> modelLayers(List<ModelTexture> layers) {
+        if (layers == null) return List.of();
+        return layers.stream().map(ModelTexture::key).filter(java.util.Objects::nonNull).toList();
+    }
+
+    private static void reportReason(PackPostProcessContext<?> context, Identifier item, String reason) {
+        if (!"layered-texture".equals(reason)) context.report().resolution("item-reason", item.toString(), reason);
+    }
+
+    private record TextureFallback(Key key, boolean rawRenderer, boolean rawSource, String reasonCode) {
     }
 
     private record ItemTexture(String path, String source) {

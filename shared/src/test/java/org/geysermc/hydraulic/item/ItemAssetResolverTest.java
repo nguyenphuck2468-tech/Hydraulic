@@ -1,0 +1,61 @@
+package org.geysermc.hydraulic.item;
+
+import net.minecraft.resources.Identifier;
+import org.geysermc.hydraulic.platform.mod.ModInfo;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class ItemAssetResolverTest {
+    @TempDir
+    Path temporaryDirectory;
+
+    @Test
+    void resolvesInheritedLayerTexturesInOrder() throws IOException {
+        write("assets/example/models/item/base.json", "{\"textures\":{\"layer0\":\"example:item/base\"}}");
+        write("assets/example/models/item/child.json", "{\"parent\":\"example:item/base\",\"textures\":{\"layer1\":\"example:item/overlay\"}}");
+        write("assets/example/items/gadget.json", "{\"model\":{\"type\":\"minecraft:model\",\"model\":\"example:item/child\"}}");
+
+        ItemAssetResolver.ResolvedItemAsset resolved = ItemAssetResolver.resolve(mod(), Identifier.fromNamespaceAndPath("example", "gadget"));
+
+        assertEquals(List.of("example:item/base", "example:item/overlay"), resolved.textureLayers().stream().map(Object::toString).toList());
+        assertEquals("layered-texture", resolved.reasonCode());
+    }
+
+    @Test
+    void reportsSpecialRendererAndTintWhileStillFindingItsIconLayer() throws IOException {
+        write("assets/example/models/item/icon.json", "{\"textures\":{\"layer0\":\"example:item/icon\"}}");
+        write("assets/example/items/special.json", "{\"model\":{\"type\":\"minecraft:special\",\"model\":\"example:item/icon\"},\"tints\":[{\"type\":\"minecraft:constant\"}]} ");
+
+        ItemAssetResolver.ResolvedItemAsset resolved = ItemAssetResolver.resolve(mod(), Identifier.fromNamespaceAndPath("example", "special"));
+
+        assertEquals(List.of("example:item/icon"), resolved.textureLayers().stream().map(Object::toString).toList());
+        assertEquals("special-renderer", resolved.reasonCode());
+    }
+
+    @Test
+    void reportsUnresolvedParentWithoutDiscardingChildTexture() throws IOException {
+        write("assets/example/models/item/broken.json", "{\"parent\":\"example:item/missing\",\"textures\":{\"layer0\":\"example:item/icon\"}}");
+
+        ItemAssetResolver.ResolvedItemAsset resolved = ItemAssetResolver.resolve(mod(), Identifier.fromNamespaceAndPath("example", "broken"));
+
+        assertEquals(List.of("example:item/icon"), resolved.textureLayers().stream().map(Object::toString).toList());
+        assertEquals("unresolved-parent", resolved.reasonCode());
+    }
+
+    private ModInfo mod() {
+        return new ModInfo("example", "example", "Example", "1", null, List.of(temporaryDirectory));
+    }
+
+    private void write(String resource, String content) throws IOException {
+        Path file = temporaryDirectory.resolve(resource);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
+    }
+}
