@@ -93,6 +93,19 @@ class PackArchiveValidatorTest {
     }
 
     @Test
+    void recordsReflectionFallbackClassAndReason() {
+        ConversionReport report = new ConversionReport();
+        String detail = "namespace=example, entity=broken, class=example.client.model.ModelBroken, reason=IncompatibleClassChangeError: broken runtime link";
+        report.fallback("entity-reflection");
+        report.outcome("entity-reflection-fallback", "example:broken");
+        report.resolution("entity-reflection-fallback", "example:broken", detail);
+
+        var json = report.json(0, 0, 1, 0);
+        assertTrue(json.getAsJsonObject("asset_resolutions").getAsJsonObject("entity-reflection-fallback")
+                .get("example:broken").getAsString().contains("class=example.client.model.ModelBroken"));
+    }
+
+    @Test
     void recordsAffectedIdsAndPhaseTimings() {
         ConversionReport report = new ConversionReport();
         report.outcome("entity-hitbox", "example:beast");

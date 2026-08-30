@@ -23,6 +23,7 @@ import org.geysermc.hydraulic.pack.converter.CustomModelConverter;
 import org.geysermc.hydraulic.pack.modules.MetadataPackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.pack.converter.PackConverter;
+import org.geysermc.pack.converter.type.entity.EntityModelScanner;
 import org.geysermc.pack.converter.pipeline.AssetConverters;
 import org.geysermc.pack.converter.pipeline.ConverterPipeline;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
@@ -241,12 +242,21 @@ public class PackManager {
             }
         });
 
+        int reportedEntityDiagnostics = 0;
         try {
             Files.deleteIfExists(stagedPack);
 
             for (final Path root : mod.roots()) {
                 long rootStartedAt = System.nanoTime();
                 converter.input(root, false).convert();
+                List<EntityModelScanner.Diagnostic> diagnostics = converter.entityModelDiagnostics();
+                for (int index = reportedEntityDiagnostics; index < diagnostics.size(); index++) {
+                    EntityModelScanner.Diagnostic diagnostic = diagnostics.get(index);
+                    report.fallback("entity-reflection");
+                    report.outcome("entity-reflection-fallback", diagnostic.path());
+                    report.resolution("entity-reflection-fallback", diagnostic.path(), diagnostic.detail());
+                }
+                reportedEntityDiagnostics = diagnostics.size();
                 LOGGER.info("Conversion input {} root {} completed in {} ms", mod.id(), root,
                         (System.nanoTime() - rootStartedAt) / 1_000_000);
             }
