@@ -212,7 +212,10 @@ public final class PackArchiveValidator {
         if (warning.contains("textures/atlas/") || warning.contains("minecraft:/atlas") || warning.contains("minecraft:atlas")) {
             return Severity.INFO;
         }
-        if (warning.startsWith("missing atlas texture")) return Severity.ERROR;
+        if (warning.startsWith("missing atlas texture") || warning.startsWith("missing entity geometry")
+                || warning.startsWith("missing entity animation") || warning.startsWith("missing animation controller")) {
+            return Severity.ERROR;
+        }
         return Severity.WARNING;
     }
 

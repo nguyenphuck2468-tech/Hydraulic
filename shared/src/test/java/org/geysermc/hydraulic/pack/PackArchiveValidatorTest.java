@@ -94,6 +94,8 @@ class PackArchiveValidatorTest {
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity geometry")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity animation")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing animation controller")));
+        assertTrue(result.findings().stream().anyMatch(finding -> finding.code().equals("broken-geometry-link")
+                && finding.severity() == PackArchiveValidator.Severity.ERROR));
     }
 
     @Test
