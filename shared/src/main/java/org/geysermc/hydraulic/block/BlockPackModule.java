@@ -493,12 +493,12 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     private static String stateCondition(BlockState state) {
         List<String> conditions = new ArrayList<>();
         for (Property<?> property : state.getProperties()) {
-            String propValue = state.getValue(property).toString();
+            String propValue = serializedStateValue(state, property);
             if (property instanceof IntegerProperty intProperty) {
                 propValue = Integer.toString(BedrockPropertyMapper.value(new ArrayList<>(intProperty.getPossibleValues()), state.getValue(intProperty)));
             }
             if (property instanceof EnumProperty<?>) {
-                propValue = "'" + propValue.toLowerCase() + "'";
+                propValue = "'" + propValue + "'";
             }
             conditions.add(String.format(STATE_CONDITION, property.getName(), propValue));
         }
@@ -627,9 +627,9 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     }
 
     private static MultiVariant matchState(@NotNull BlockState state, @NotNull Map<String, MultiVariant> variants) {
-        List<String> properties = new ArrayList<>();
+        Map<String, String> properties = new HashMap<>();
         for (Property<?> property : state.getProperties()) {
-            properties.add(property.getName() + "=" + serializedStateValue(state, property));
+            properties.put(property.getName(), serializedStateValue(state, property));
         }
 
         MultiVariant bestMatch = null;
@@ -637,14 +637,8 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         for (Map.Entry<String, MultiVariant> entry : variants.entrySet()) {
             String variant = entry.getKey();
 
-            String[] property = variant.split(",");
-            boolean match = true;
-            for (String prop : property) {
-                if (!properties.contains(prop)) {
-                    match = false;
-                    break;
-                }
-            }
+            String[] property = variant.isEmpty() ? new String[0] : variant.split(",");
+            boolean match = variantMatches(properties, variant);
 
             if (match && property.length > bestSpecificity) {
                 bestMatch = entry.getValue();
@@ -653,6 +647,18 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         }
 
         return bestMatch;
+    }
+
+    /** Matches Java blockstate variant syntax, including alternatives such as facing=north|south. */
+    static boolean variantMatches(Map<String, String> properties, String variant) {
+        if (variant.isEmpty()) return false;
+        for (String condition : variant.split(",")) {
+            int separator = condition.indexOf('=');
+            if (separator <= 0 || separator == condition.length() - 1) return false;
+            String actual = properties.get(condition.substring(0, separator));
+            if (actual == null || !matchesStateValue(actual, condition.substring(separator + 1))) return false;
+        }
+        return true;
     }
 
     private static boolean matchesStateValue(String actual, String expected) {

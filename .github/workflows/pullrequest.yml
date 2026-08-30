@@ -28,19 +28,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Checkout Hydraulic source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
       - name: Setup Gradle and Java
-        uses: GeyserMC/actions/setup-gradle-composite@master
+        uses: GeyserMC/actions/setup-gradle-composite@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         with:
           setup-java_java-version: 25
           setup-gradle_cache-read-only: true
 
       - name: Checkout PackConverter integration source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ env.PACK_CONVERTER_REPO }}
           ref: ${{ env.PACK_CONVERTER_REF }}
           path: PackConverter
           persist-credentials: false
+
+      - name: Verify PackConverter checkout
+        working-directory: PackConverter
+        run: |
+          test -f settings.gradle.kts
+          test -f converter/build.gradle.kts
+          test "$(git rev-parse HEAD)" = "$PACK_CONVERTER_REF"
+          git status --short
+
+      - name: Test PackConverter integration source
+        working-directory: PackConverter
+        run: gradle :converter:test --no-daemon --stacktrace --warning-mode all
 
       - name: Publish PackConverter modules to local Maven
         working-directory: PackConverter
@@ -51,8 +68,9 @@ jobs:
         run: ./gradlew build --no-daemon --stacktrace
 
       - name: Archive Artifacts
-        uses: GeyserMC/actions/upload-multi-artifact@master
+        uses: GeyserMC/actions/upload-multi-artifact@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         if: success()
         with:
           artifacts: |
             fabric/build/libs/hydraulic-fabric.jar
+            neoforge/build/libs/hydraulic-neoforge.jar

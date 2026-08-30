@@ -29,13 +29,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Checkout Hydraulic source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
       - name: Setup Gradle and Java
-        uses: GeyserMC/actions/setup-gradle-composite@master
+        uses: GeyserMC/actions/setup-gradle-composite@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         with:
           setup-java_java-version: 25
 
       - name: Checkout PackConverter integration source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ env.PACK_CONVERTER_REPO }}
           ref: ${{ env.PACK_CONVERTER_REF }}
@@ -47,8 +52,12 @@ jobs:
         run: |
           test -f settings.gradle.kts
           test -f converter/build.gradle.kts
-          git rev-parse --verify HEAD
+          test "$(git rev-parse HEAD)" = "$PACK_CONVERTER_REF"
           git status --short
+
+      - name: Test PackConverter integration source
+        working-directory: PackConverter
+        run: gradle :converter:test --no-daemon --stacktrace --warning-mode all
 
       - name: Publish PackConverter modules to local Maven
         working-directory: PackConverter
@@ -66,11 +75,12 @@ jobs:
         run: ./gradlew build --no-daemon --stacktrace --warning-mode all
 
       - name: Archive Artifacts
-        uses: GeyserMC/actions/upload-multi-artifact@master
+        uses: GeyserMC/actions/upload-multi-artifact@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         if: success()
         with:
           artifacts: |
             fabric/build/libs/hydraulic-fabric.jar
+            neoforge/build/libs/hydraulic-neoforge.jar
 
       - name: Get Version
         if: ${{ success() && github.repository == 'GeyserMC/Hydraulic' && github.ref_name == 'master' }}
@@ -82,7 +92,7 @@ jobs:
       - name: Get Release Metadata
         if: ${{ success() && github.repository == 'GeyserMC/Hydraulic' && github.ref_name == 'master' }}
         id: metadata
-        uses: GeyserMC/actions/release@master
+        uses: GeyserMC/actions/release@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         with:
           appID: ${{ secrets.RELEASE_APP_ID }}
           appPrivateKey: ${{ secrets.RELEASE_APP_PK }}
@@ -95,7 +105,7 @@ jobs:
 
       - name: Publish to Downloads API
         if: ${{ success() && github.repository == 'GeyserMC/Hydraulic' && github.ref_name == 'master' }}
-        uses: GeyserMC/actions/upload-release@master
+        uses: GeyserMC/actions/upload-release@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         with:
           username: ${{ vars.DOWNLOADS_USERNAME }}
           privateKey: ${{ secrets.DOWNLOADS_PRIVATE_KEY }}
@@ -106,7 +116,7 @@ jobs:
 
       - name: Notify Discord
         if: ${{ (success() || failure()) && github.repository == 'GeyserMC/Hydraulic' }}
-        uses: GeyserMC/actions/notify-discord@master
+        uses: GeyserMC/actions/notify-discord@e4d4a9d33249b7303094470d4a1e49a6fa6643d4
         with:
           discordWebhook: ${{ secrets.DISCORD_WEBHOOK }}
           status: ${{ job.status }}
