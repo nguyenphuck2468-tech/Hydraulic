@@ -11,28 +11,33 @@ import java.nio.file.Path;
 import java.util.stream.Stream;
 
 /**
- * Packs the pack into a zip file unless it is empty.
+ * Packs the pack into a zip file unless conversion emitted metadata only.
  * <p>
  * Delegates content conversion to PackConverter without rewriting generated files:
  * models, animations and texture references must retain the paths emitted by the
  * converter so gameplay mods can reference their assets reliably.
  */
 public class PackPackager implements PackageHandler {
+    private boolean metadataOnly;
+
     @Override
     public void pack(@NotNull PackConverter converter, @NotNull Path path, @NotNull Path outputPath, @NotNull LogListener logger) throws IOException {
-        boolean notEmptyPack = true;
-        try (Stream<Path> walker = Files.walk(path)) {
-            notEmptyPack = walker.filter(Files::isRegularFile)
-                    .anyMatch(filePath -> !("manifest.json".equals(filePath.getFileName().toString())
-                            || "pack_icon.png".equals(filePath.getFileName().toString())));
-        } catch (IOException ignored) {
-            // Let the ZIP handler report the actionable error for an unreadable pack.
-        }
-
-        if (!notEmptyPack) {
-            return;
-        }
+        metadataOnly = !hasPackAssets(path);
+        if (metadataOnly) return;
 
         PackageHandler.ZIP.pack(converter, path, outputPath, logger);
+    }
+
+    boolean metadataOnly() {
+        return metadataOnly;
+    }
+
+    static boolean hasPackAssets(Path path) throws IOException {
+        try (Stream<Path> walker = Files.walk(path)) {
+            return walker.filter(Files::isRegularFile)
+                    .map(path::relativize)
+                    .map(file -> file.toString().replace('\\', '/'))
+                    .anyMatch(file -> !PackArchiveValidator.isMetadataFile(file));
+        }
     }
 }

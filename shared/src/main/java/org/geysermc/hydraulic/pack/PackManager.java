@@ -193,10 +193,10 @@ public class PackManager {
      *
      * @param mod the mod to create the pack for
      * @param packPath the path to the pack
-     * @return {@code true} if the pack was created, {@code false} otherwise
+     * @return whether a pack was published, safely skipped as metadata-only, or failed
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    boolean createPack(@NotNull ModInfo mod, @NotNull Path packPath, @NotNull String fingerprint) {
+    PackCreationResult createPack(@NotNull ModInfo mod, @NotNull Path packPath, @NotNull String fingerprint) {
         long startedAt = System.nanoTime();
         int blockCount = this.modsToBlocks.get(mod.id()).size();
         int itemCount = this.modsToItems.get(mod.id()).size();
@@ -207,6 +207,7 @@ public class PackManager {
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
         pipelines.add(AssetConverters.create(new MetadataPackModule(mod, fingerprint)));
 
+        PackPackager packager = new PackPackager();
         PackConverter converter = new PackConverter()
                 .packName(mod.name())
                 .logListener(new PackLogListener(LoggerFactory.getLogger(LOGGER.getName() + "/" + mod.id())))
@@ -216,7 +217,7 @@ public class PackManager {
                 .textureSubdirectory(mod.namespace())
                 .reflectionEntityIds(this.modsToEntities.get(mod.id()).stream()
                         .map(type -> BuiltInRegistries.ENTITY_TYPE.getKey(type).toString()).toList())
-                .packageHandler(new PackPackager());
+                .packageHandler(packager);
 
         converter.postProcessor((javaPack, bedrockPack) -> {
             long postProcessStartedAt = System.nanoTime();
@@ -263,7 +264,7 @@ public class PackManager {
         } catch (IOException | RuntimeException exception) {
             discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to convert mod {} to pack", mod.id(), exception);
-            return false;
+            return PackCreationResult.FAILED;
         }
         long convertedAt = System.nanoTime();
 
@@ -272,7 +273,11 @@ public class PackManager {
         } catch (IOException | RuntimeException exception) {
             discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to export pack for mod {}", mod.id(), exception);
-            return false;
+            return PackCreationResult.FAILED;
+        }
+        if (packager.metadataOnly()) {
+            LOGGER.info("Skipped metadata-only pack for {}: no converted Bedrock assets", mod.id());
+            return PackCreationResult.METADATA_ONLY;
         }
         long packagedAt = System.nanoTime();
 
@@ -283,7 +288,12 @@ public class PackManager {
                 if (!validation.valid()) {
                     discardStagedPack(stagedPack, mod.id());
                     LOGGER.error("Discarded invalid pack for {}: {}", mod.id(), validation.errors());
-                    return false;
+                    return PackCreationResult.FAILED;
+                }
+                if (validation.metadataOnly()) {
+                    discardStagedPack(stagedPack, mod.id());
+                    LOGGER.info("Discarded metadata-only archive for {} after validation", mod.id());
+                    return PackCreationResult.METADATA_ONLY;
                 }
                 if (!validation.warnings().isEmpty()) {
                     report.validationWarnings(validation.warnings());
@@ -316,10 +326,10 @@ public class PackManager {
             } catch (IOException exception) {
                 discardStagedPack(stagedPack, mod.id());
                 LOGGER.error("Discarded unreadable staged pack for {}", mod.id(), exception);
-                return false;
+                return PackCreationResult.FAILED;
             }
         }
-        return created;
+        return created ? PackCreationResult.CREATED : PackCreationResult.FAILED;
     }
 
     static Path stagedPackPath(Path packPath) {
@@ -340,6 +350,12 @@ public class PackManager {
         } catch (IOException exception) {
             LOGGER.warn("Could not remove incomplete staged pack for {} at {}", modId, stagedPack, exception);
         }
+    }
+
+    enum PackCreationResult {
+        CREATED,
+        METADATA_ONLY,
+        FAILED
     }
 
     private void callEvents(@NotNull Event event) {

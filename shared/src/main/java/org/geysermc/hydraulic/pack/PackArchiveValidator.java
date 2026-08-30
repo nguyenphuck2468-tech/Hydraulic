@@ -32,6 +32,7 @@ public final class PackArchiveValidator {
         Set<String> animations = new HashSet<>();
         Set<String> animationControllers = new HashSet<>();
         int files = 0;
+        int assetFiles = 0;
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             if (zip.getEntry("manifest.json") == null) errors.add("missing manifest.json");
             if (zip.getEntry(PackManager.PACK_GENERATION_MARKER) == null) errors.add("missing " + PackManager.PACK_GENERATION_MARKER);
@@ -40,6 +41,7 @@ public final class PackArchiveValidator {
                 ZipEntry entry = entries.nextElement();
                 if (entry.isDirectory()) continue;
                 files++;
+                if (!isMetadataFile(entry.getName())) assetFiles++;
                 filesByPath.add(entry.getName());
                 if (entry.getName().length() >= BEDROCK_PATH_WARNING_LENGTH) {
                     warnings.add("long path " + entry.getName());
@@ -85,7 +87,20 @@ public final class PackArchiveValidator {
                 }
             }
         }
-        return new Result(files, List.copyOf(errors), List.copyOf(warnings));
+        return new Result(files, assetFiles, List.copyOf(errors), List.copyOf(warnings));
+    }
+
+    static boolean hasAssets(ZipFile zip) {
+        var entries = zip.entries();
+        while (entries.hasMoreElements()) {
+            ZipEntry entry = entries.nextElement();
+            if (!entry.isDirectory() && !isMetadataFile(entry.getName())) return true;
+        }
+        return false;
+    }
+
+    static boolean isMetadataFile(String path) {
+        return path.equals("manifest.json") || path.equals("pack_icon.png") || path.equals(PackManager.PACK_GENERATION_MARKER);
     }
 
     private static void collectReferences(String file, JsonObject root, List<EntityReferences> entities, List<AtlasReferences> atlases, Set<String> geometries,
@@ -193,9 +208,13 @@ public final class PackArchiveValidator {
     private record AtlasReferences(String file, String key, List<String> textures) {
     }
 
-    public record Result(int files, List<String> errors, List<String> warnings) {
+    public record Result(int files, int assetFiles, List<String> errors, List<String> warnings) {
         public boolean valid() {
             return errors.isEmpty();
+        }
+
+        public boolean metadataOnly() {
+            return assetFiles == 0;
         }
     }
 }

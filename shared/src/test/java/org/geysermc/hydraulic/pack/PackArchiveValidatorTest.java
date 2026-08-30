@@ -48,6 +48,37 @@ class PackArchiveValidatorTest {
     }
 
     @Test
+    void identifiesArchivesContainingOnlyGenerationMetadata() throws IOException {
+        Path archive = temporaryDirectory.resolve("metadata-only.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, "pack_icon.png", "icon");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertTrue(result.valid());
+        assertTrue(result.metadataOnly());
+        assertTrue(result.assetFiles() == 0);
+    }
+
+    @Test
+    void retainsTextureOnlyPacksAsRealAssets() throws IOException {
+        Path archive = temporaryDirectory.resolve("texture-only.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "textures/example/dependency.png", "texture");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertFalse(result.metadataOnly());
+        assertTrue(result.assetFiles() == 1);
+    }
+
+    @Test
     void reportsEntityTextureReferencesThatAreMissingFromTheArchive() throws IOException {
         Path archive = temporaryDirectory.resolve("fixture.mcpack");
         try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {

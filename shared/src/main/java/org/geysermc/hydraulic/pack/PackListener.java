@@ -137,6 +137,7 @@ public class PackListener {
 
         List<PackRequest> packsToLoad = plan.toConvert();
         if (packsToLoad.isEmpty()) {
+            logSummary(plan.reusable().size(), 0, 0, 0);
             return;
         }
 
@@ -151,17 +152,20 @@ public class PackListener {
                             this.manager.createPack(request.mod(), request.packPath(), request.fingerprint()));
                 } catch (Throwable t) {
                     LOGGER.error("Failed to convert pack for mod {}", request.mod().id(), t);
-                    return new PackResult(request.packPath(), false);
+                    return new PackResult(request.packPath(), PackManager.PackCreationResult.FAILED);
                 }
             }, THREAD_POOL));
         }
 
         List<PackResult> completed = awaitCompleted(futures, remainingBudgetMillis(startedAt));
         int registered = 0;
+        int skippedEmpty = 0;
         for (PackResult result : completed) {
-            if (result.created()) {
+            if (result.outcome() == PackManager.PackCreationResult.CREATED) {
                 event.register(ResourcePack.create(PackCodec.path(result.packPath())), PriorityOption.NORMAL);
                 registered++;
+            } else if (result.outcome() == PackManager.PackCreationResult.METADATA_ONLY) {
+                skippedEmpty++;
             }
         }
 
@@ -179,6 +183,7 @@ public class PackListener {
 
         LOGGER.info("Registered {} of {} converted packs in {}", registered, packsToLoad.size(),
                 FormatUtil.humanReadableFormat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
+        logSummary(plan.reusable().size(), registered, skippedEmpty, unfinishedMods.size());
     }
 
     private PackPlan planPacks() {
@@ -186,7 +191,7 @@ public class PackListener {
         // This is so we can regenerate packs on update in case the pack generation logic has changed
         ModInfo hydraulicMod = this.hydraulic.mod(Constants.MOD_ID);
         String hydraulicFingerprint = PackUtil.getModUUID(hydraulicMod.roots()).toString();
-        boolean hydraulicUpdated = checkNeedsConversion(hydraulicMod, this.hydraulic.modStorage(hydraulicMod).pack(), hydraulicFingerprint);
+        boolean hydraulicUpdated = needsConversion(this.hydraulic.modStorage(hydraulicMod).pack(), hydraulicFingerprint);
 
         if (hydraulicUpdated) {
             LOGGER.info("Hydraulic has updated since the last pack conversion, regenerating all packs!");
@@ -209,7 +214,7 @@ public class PackListener {
 
             Path packPath = storage.pack();
             String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
-            if (this.hydraulic.isDev() || hydraulicUpdated || checkNeedsConversion(mod, packPath, fingerprint)) {
+            if (this.hydraulic.isDev() || hydraulicUpdated || needsConversion(packPath, fingerprint)) {
                 packsToLoad.add(new PackRequest(mod, packPath, fingerprint));
             } else {
                 reusable.add(new PackRequest(mod, packPath, fingerprint));
@@ -255,17 +260,18 @@ public class PackListener {
      * Checks if the pack needs to be converted based on the generated UUID.
      * This allows pack regeneration if the mod file has changed.
      *
-     * @param mod The mod to check.
      * @param packPath The path to the pack.
+     * @param fingerprint The source-mod fingerprint expected in the generated pack.
      * @return {@code true} if the pack needs to be converted.
      */
-    private boolean checkNeedsConversion(ModInfo mod, Path packPath, String fingerprint) {
+    static boolean needsConversion(Path packPath, String fingerprint) {
         try (ZipFile zip = new ZipFile(packPath.toFile())) {
             var manifestEntry = zip.getEntry("manifest.json");
             var generationMarkerEntry = zip.getEntry(PackManager.PACK_GENERATION_MARKER);
             if (manifestEntry == null || generationMarkerEntry == null) {
                 return true;
             }
+            if (!PackArchiveValidator.hasAssets(zip)) return true;
 
             try (InputStream markerStream = zip.getInputStream(generationMarkerEntry);
                  InputStreamReader markerReader = new InputStreamReader(markerStream)) {
@@ -294,13 +300,18 @@ public class PackListener {
         }
     }
 
+    private static void logSummary(int reused, int converted, int skippedEmpty, int timedOut) {
+        LOGGER.info("Hydraulic packs: reused={} | converted={} | skipped-empty={} | timed-out={}",
+                reused, converted, skippedEmpty, timedOut);
+    }
+
     private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {
     }
 
     private record PackPlan(List<PackRequest> reusable, List<PackRequest> toConvert) {
     }
 
-    private record PackResult(Path packPath, boolean created) {
+    private record PackResult(Path packPath, PackManager.PackCreationResult outcome) {
     }
 }
 
