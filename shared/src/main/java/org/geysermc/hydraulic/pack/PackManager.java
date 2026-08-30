@@ -22,7 +22,6 @@ import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.pack.converter.CustomModelConverter;
 import org.geysermc.hydraulic.pack.modules.MetadataPackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
-import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.converter.PackConverter;
 import org.geysermc.pack.converter.pipeline.AssetConverters;
 import org.geysermc.pack.converter.pipeline.ConverterPipeline;
@@ -193,16 +192,15 @@ public class PackManager {
      * @return {@code true} if the pack was created, {@code false} otherwise
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    boolean createPack(@NotNull ModInfo mod, @NotNull Path packPath) {
+    boolean createPack(@NotNull ModInfo mod, @NotNull Path packPath, @NotNull String fingerprint) {
         long startedAt = System.nanoTime();
-        String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
         int blockCount = this.modsToBlocks.get(mod.id()).size();
         int itemCount = this.modsToItems.get(mod.id()).size();
         int entityCount = this.modsToEntities.get(mod.id()).size();
         ConversionReport report = new ConversionReport();
         LOGGER.info("Converting {} [blocks={}, items={}, entities={}, roots={}]", mod.id(), blockCount, itemCount, entityCount, mod.roots().size());
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
-        pipelines.add(AssetConverters.create(new MetadataPackModule(mod)));
+        pipelines.add(AssetConverters.create(new MetadataPackModule(mod, fingerprint)));
 
         PackConverter converter = new PackConverter()
                 .packName(mod.name())
@@ -266,7 +264,10 @@ public class PackManager {
                     return false;
                 }
                 if (!validation.warnings().isEmpty()) {
-                    LOGGER.warn("Pack validation warnings for {}: {}", mod.id(), validation.warnings());
+                    report.validationWarnings(validation.warnings());
+                    int shown = Math.min(20, validation.warnings().size());
+                    LOGGER.warn("Pack validation warnings for {} [{} total; showing {}]: {}{}", mod.id(), validation.warnings().size(), shown,
+                            String.join("; ", validation.warnings().subList(0, shown)), validation.warnings().size() > shown ? " ..." : "");
                 }
                 long validatedAt = System.nanoTime();
                 long assetsMillis = (convertedAt - startedAt) / 1_000_000;

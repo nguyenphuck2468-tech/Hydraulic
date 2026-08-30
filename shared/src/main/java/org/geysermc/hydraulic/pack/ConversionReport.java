@@ -11,6 +11,7 @@ public final class ConversionReport {
     private final Map<String, Integer> outcomes = new LinkedHashMap<>();
     private final Map<String, List<String>> outcomeIds = new LinkedHashMap<>();
     private final Map<String, Map<String, String>> resolutions = new LinkedHashMap<>();
+    private final List<String> validationWarnings = new java.util.ArrayList<>();
 
     public void fallback(String kind) {
         fallbacks.merge(kind, 1, Integer::sum);
@@ -34,6 +35,11 @@ public final class ConversionReport {
         resolutions.computeIfAbsent(kind, ignored -> new LinkedHashMap<>()).put(id, source);
     }
 
+    /** Stores every validation warning while the server log keeps a short preview. */
+    public void validationWarnings(List<String> warnings) {
+        validationWarnings.addAll(warnings);
+    }
+
     public JsonObject json(int blocks, int items, int entities, long assetsMillis, long packageMillis, long validationMillis) {
         JsonObject root = new JsonObject();
         root.addProperty("blocks", blocks);
@@ -55,6 +61,9 @@ public final class ConversionReport {
             sources.add(kind, entries);
         });
         root.add("asset_resolutions", sources);
+        var warnings = new com.google.gson.JsonArray();
+        validationWarnings.forEach(warnings::add);
+        root.add("validation_warnings", warnings);
         JsonObject timings = new JsonObject();
         timings.addProperty("assets", assetsMillis);
         timings.addProperty("package", packageMillis);

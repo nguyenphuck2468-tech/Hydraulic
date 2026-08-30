@@ -4,7 +4,6 @@ import net.kyori.adventure.text.Component;
 import org.apache.commons.lang3.StringUtils;
 import org.geysermc.hydraulic.Constants;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
-import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.Manifest;
 import org.geysermc.pack.bedrock.resource.manifest.Header;
@@ -26,9 +25,11 @@ import java.util.UUID;
 
 public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConverter<ModInfo, Manifest>, AssetCombiner<Manifest> {
     private final ModInfo modInfo;
+    private final String packUuid;
 
-    public MetadataPackModule(ModInfo modInfo) {
+    public MetadataPackModule(ModInfo modInfo, String packUuid) {
         this.modInfo = modInfo;
+        this.packUuid = packUuid;
     }
 
     @Override
@@ -59,12 +60,11 @@ public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConvert
         header.name(modId);
 
         // Generate the pack uuid from the mod file
-        String packUuid = PackUtil.getModUUID(mod.roots()).toString();
-        header.uuid(packUuid);
+        header.uuid(this.packUuid);
 
         // Generate module uuid based on type
         for (Modules module : manifest.modules()) {
-            module.uuid(UUID.nameUUIDFromBytes((module.type + packUuid).getBytes()).toString());
+            module.uuid(UUID.nameUUIDFromBytes((module.type + this.packUuid).getBytes()).toString());
             module.description(modId + " - " + displayName + " " + StringUtils.capitalize(module.type));
         }
 

@@ -5,7 +5,6 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import net.minecraft.SharedConstants;
-import org.apache.commons.lang3.tuple.Pair;
 import org.geysermc.event.PostOrder;
 import org.geysermc.event.subscribe.Subscribe;
 import org.geysermc.geyser.api.event.lifecycle.GeyserDefineResourcePacksEvent;
@@ -104,14 +103,15 @@ public class PackListener {
         // Check if hydraulic has updated since the last pack conversion
         // This is so we can regenerate packs on update in case the pack generation logic has changed
         ModInfo hydraulicMod = this.hydraulic.mod(Constants.MOD_ID);
-        boolean hydraulicUpdated = checkNeedsConversion(hydraulicMod, this.hydraulic.modStorage(hydraulicMod).pack());
+        String hydraulicFingerprint = PackUtil.getModUUID(hydraulicMod.roots()).toString();
+        boolean hydraulicUpdated = checkNeedsConversion(hydraulicMod, this.hydraulic.modStorage(hydraulicMod).pack(), hydraulicFingerprint);
 
         if (hydraulicUpdated) {
             LOGGER.info("Hydraulic has updated since the last pack conversion, regenerating all packs!");
         }
 
         // Go over all mods and load the pack or mark them for conversion
-        Map<String, Pair<ModInfo, Path>> packsToLoad = new HashMap<>();
+        Map<String, PackRequest> packsToLoad = new HashMap<>();
         for (ModInfo mod : this.hydraulic.mods()) {
             if (PackManager.IGNORED_MODS.contains(mod.id())) {
                 continue;
@@ -125,8 +125,9 @@ public class PackListener {
             ModStorage storage = this.hydraulic.modStorage(mod);
 
             Path packPath = storage.pack();
-            if (this.hydraulic.isDev() || hydraulicUpdated || checkNeedsConversion(mod, packPath)) {
-                packsToLoad.put(mod.id(), Pair.of(mod, packPath));
+            String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
+            if (this.hydraulic.isDev() || hydraulicUpdated || checkNeedsConversion(mod, packPath, fingerprint)) {
+                packsToLoad.put(mod.id(), new PackRequest(mod, packPath, fingerprint));
             } else {
                 // We don't need to convert the pack, just register it
                 LOGGER.info("Reusing converted pack for mod {} [revision={}]", mod.id(), PackManager.PACK_GENERATION_REVISION);
@@ -147,8 +148,9 @@ public class PackListener {
             futures.add(CompletableFuture.runAsync(() -> {
                 LOGGER.info("Converting pack for mod {}", entry.getKey());
                 try {
-                    if (this.manager.createPack(entry.getValue().getLeft(), entry.getValue().getRight())) {
-                        event.register(ResourcePack.create(PackCodec.path(entry.getValue().getRight())), PriorityOption.NORMAL);
+                    PackRequest request = entry.getValue();
+                    if (this.manager.createPack(request.mod(), request.packPath(), request.fingerprint())) {
+                        event.register(ResourcePack.create(PackCodec.path(request.packPath())), PriorityOption.NORMAL);
                     }
                 } catch (Throwable t) {
                     LOGGER.error("Failed to convert pack for mod {}", entry.getKey(), t);
@@ -170,7 +172,7 @@ public class PackListener {
      * @param packPath The path to the pack.
      * @return {@code true} if the pack needs to be converted.
      */
-    private boolean checkNeedsConversion(ModInfo mod, Path packPath) {
+    private boolean checkNeedsConversion(ModInfo mod, Path packPath, String fingerprint) {
         try (ZipFile zip = new ZipFile(packPath.toFile())) {
             var manifestEntry = zip.getEntry("manifest.json");
             var generationMarkerEntry = zip.getEntry(PackManager.PACK_GENERATION_MARKER);
@@ -178,7 +180,6 @@ public class PackListener {
                 return true;
             }
 
-            String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
             try (InputStream markerStream = zip.getInputStream(generationMarkerEntry);
                  InputStreamReader markerReader = new InputStreamReader(markerStream)) {
                 JsonObject marker = GSON.fromJson(markerReader, JsonObject.class);
@@ -204,6 +205,9 @@ public class PackListener {
             // preventing Geyser from loading every other converted pack.
             return true;
         }
+    }
+
+    private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {
     }
 }
 
