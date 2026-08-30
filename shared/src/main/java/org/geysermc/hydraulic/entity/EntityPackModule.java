@@ -507,19 +507,49 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             return;
         }
 
-        float halfWidth = dimensions.width() / 2f;
-        float bodyHeight = dimensions.height();
-        var shape = Shapes.box(-halfWidth, 0, -halfWidth, halfWidth, bodyHeight, halfWidth);
-        if (dimensions.height() > dimensions.width() * 1.4f) {
-            bodyHeight *= 0.7f;
-            shape = Shapes.or(
-                    Shapes.box(-halfWidth, 0, -halfWidth, halfWidth, bodyHeight, halfWidth),
-                    Shapes.box(-halfWidth * 0.7f, bodyHeight, -halfWidth * 0.7f, halfWidth * 0.7f, dimensions.height(), halfWidth * 0.7f));
-        }
         // ponytail: this is deliberately an adaptive silhouette, not a fake
         // model parser; use a converted geometry whenever one exists.
-        pack.addEntityModel(GeoUtil.fromShape(shape,
-                "geometry." + namespace + "." + path), fileName);
+        pack.addEntityModel(GeoUtil.fromShape(fallbackShape(dimensions),
+                "geometry." + namespace + "." + path, true), fileName);
+    }
+
+    /**
+     * Builds a visible body plan from dimensions alone when no transferable
+     * model exists. Broad entities get a quadruped silhouette, tall entities
+     * get a biped silhouette, and compact entities retain a body/head form.
+     * No namespace or entity-name rule is involved.
+     */
+    private static net.minecraft.world.phys.shapes.VoxelShape fallbackShape(EntityDimensions dimensions) {
+        float width = dimensions.width();
+        float height = dimensions.height();
+        float half = width / 2f;
+        if (width >= height * 1.15f) {
+            float leg = Math.max(width * 0.12f, 0.08f);
+            float legHeight = height * 0.35f;
+            float bodyHalf = half * 0.85f;
+            var body = Shapes.box(-bodyHalf, legHeight, -bodyHalf, bodyHalf, height * 0.78f, bodyHalf);
+            var head = Shapes.box(-half * 0.45f, height * 0.55f, -half, half * 0.45f, height, -half * 0.25f);
+            return Shapes.or(body, head,
+                    Shapes.box(-bodyHalf, 0, -bodyHalf, -bodyHalf + leg, legHeight, -bodyHalf + leg),
+                    Shapes.box(bodyHalf - leg, 0, -bodyHalf, bodyHalf, legHeight, -bodyHalf + leg),
+                    Shapes.box(-bodyHalf, 0, bodyHalf - leg, -bodyHalf + leg, legHeight, bodyHalf),
+                    Shapes.box(bodyHalf - leg, 0, bodyHalf - leg, bodyHalf, legHeight, bodyHalf));
+        }
+        if (height >= width * 1.5f) {
+            float legHalf = half * 0.22f;
+            float torsoHalf = half * 0.55f;
+            float legTop = height * 0.42f;
+            var torso = Shapes.box(-torsoHalf, legTop, -half * 0.45f, torsoHalf, height * 0.76f, half * 0.45f);
+            var head = Shapes.box(-half * 0.48f, height * 0.76f, -half * 0.45f, half * 0.48f, height, half * 0.45f);
+            return Shapes.or(torso, head,
+                    Shapes.box(-half * 0.58f, height * 0.45f, -half * 0.32f, -torsoHalf, height * 0.72f, half * 0.32f),
+                    Shapes.box(torsoHalf, height * 0.45f, -half * 0.32f, half * 0.58f, height * 0.72f, half * 0.32f),
+                    Shapes.box(-half * 0.48f, 0, -half * 0.35f, -half * 0.48f + legHalf * 2, legTop, half * 0.35f),
+                    Shapes.box(half * 0.48f - legHalf * 2, 0, -half * 0.35f, half * 0.48f, legTop, half * 0.35f));
+        }
+        return Shapes.or(
+                Shapes.box(-half, 0, -half, half, height * 0.72f, half),
+                Shapes.box(-half * 0.6f, height * 0.62f, -half, half * 0.6f, height, -half * 0.15f));
     }
 
     /**

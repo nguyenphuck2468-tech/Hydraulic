@@ -24,6 +24,16 @@ public class GeoUtil {
      * @return the created model entity
      */
     public static ModelEntity fromShape(VoxelShape shape, String geoName) {
+        return fromShape(shape, geoName, false);
+    }
+
+    /**
+     * Converts a collision silhouette to Bedrock geometry. Entity fallbacks
+     * can parent every box to the first bone so their generic animation moves
+     * one coherent model; block geometries deliberately keep independent
+     * bones for their existing static output.
+     */
+    public static ModelEntity fromShape(VoxelShape shape, String geoName, boolean groupBones) {
         ModelEntity modelEntity = new ModelEntity();
         modelEntity.formatVersion(FORMAT_VERSION);
 
@@ -33,9 +43,10 @@ public class GeoUtil {
         description.identifier(geoName);
         description.textureWidth(16);
         description.textureHeight(16);
-        description.visibleBoundsWidth(2);
-        description.visibleBoundsHeight(2);
-        description.visibleBoundsOffset(new float[] { 0.0f, 0.25f, 0.0f });
+        AABB bounds = shape.isEmpty() ? new AABB(0, 0, 0, 1, 1, 1) : shape.bounds();
+        description.visibleBoundsWidth(Math.max(2, (float) Math.max(bounds.getXsize(), bounds.getZsize()) * 1.2f));
+        description.visibleBoundsHeight(Math.max(2, (float) bounds.getYsize() * 1.2f));
+        description.visibleBoundsOffset(new float[] { 0.0f, (float) ((bounds.minY + bounds.maxY) / 2), 0.0f });
         geometry.description(description);
 
         List<Bones> bones = new ArrayList<>();
@@ -46,6 +57,9 @@ public class GeoUtil {
 
             Bones bone = new Bones();
             bone.name("bone_" + bones.size());
+            if (groupBones && !bones.isEmpty()) {
+                bone.parent("bone_0");
+            }
             bone.pivot(new float[] { ELEMENT_OFFSET[0], ELEMENT_OFFSET[1], -ELEMENT_OFFSET[2] });
 
             Cubes cube = new Cubes();
