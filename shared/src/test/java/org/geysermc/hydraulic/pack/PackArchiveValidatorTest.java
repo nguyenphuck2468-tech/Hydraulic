@@ -98,13 +98,17 @@ class PackArchiveValidatorTest {
         report.outcome("entity-hitbox", "example:beast");
         report.resolution("entity-texture", "example:beast", "textures/entity/example/beast");
         report.validationWarnings(java.util.List.of("missing atlas texture textures/item_texture.json -> example:beast"));
+        report.timing("input", 12);
+        report.timing("package", 34);
+        report.timing("validation", 56);
 
-        var json = report.json(0, 0, 1, 12, 34, 56);
+        var json = report.json(0, 0, 1, 789);
 
         assertTrue(json.getAsJsonObject("outcome_ids").getAsJsonArray("entity-hitbox").contains(new com.google.gson.JsonPrimitive("example:beast")));
         assertTrue(json.getAsJsonObject("asset_resolutions").getAsJsonObject("entity-texture").get("example:beast").getAsString().endsWith("/beast"));
         assertTrue(json.getAsJsonArray("validation_warnings").get(0).getAsString().startsWith("missing atlas texture"));
         assertTrue(json.getAsJsonObject("timings_ms").get("package").getAsLong() == 34);
+        assertTrue(json.get("archive_bytes").getAsLong() == 789);
     }
 
     private static void entry(ZipOutputStream zip, String name, String content) throws IOException {

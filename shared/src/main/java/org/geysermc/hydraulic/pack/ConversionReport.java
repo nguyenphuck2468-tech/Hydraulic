@@ -12,6 +12,7 @@ public final class ConversionReport {
     private final Map<String, List<String>> outcomeIds = new LinkedHashMap<>();
     private final Map<String, Map<String, String>> resolutions = new LinkedHashMap<>();
     private final List<String> validationWarnings = new java.util.ArrayList<>();
+    private final Map<String, Long> timings = new LinkedHashMap<>();
 
     public void fallback(String kind) {
         fallbacks.merge(kind, 1, Integer::sum);
@@ -40,7 +41,11 @@ public final class ConversionReport {
         validationWarnings.addAll(warnings);
     }
 
-    public JsonObject json(int blocks, int items, int entities, long assetsMillis, long packageMillis, long validationMillis) {
+    public void timing(String stage, long millis) {
+        timings.merge(stage, millis, Long::sum);
+    }
+
+    public JsonObject json(int blocks, int items, int entities, long archiveBytes) {
         JsonObject root = new JsonObject();
         root.addProperty("blocks", blocks);
         root.addProperty("items", items);
@@ -64,11 +69,10 @@ public final class ConversionReport {
         var warnings = new com.google.gson.JsonArray();
         validationWarnings.forEach(warnings::add);
         root.add("validation_warnings", warnings);
-        JsonObject timings = new JsonObject();
-        timings.addProperty("assets", assetsMillis);
-        timings.addProperty("package", packageMillis);
-        timings.addProperty("validation", validationMillis);
-        root.add("timings_ms", timings);
+        JsonObject timingValues = new JsonObject();
+        timings.forEach(timingValues::addProperty);
+        root.add("timings_ms", timingValues);
+        root.addProperty("archive_bytes", archiveBytes);
         return root;
     }
 

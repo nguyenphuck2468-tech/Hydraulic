@@ -26,12 +26,16 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.zip.ZipFile;
 
 /**
@@ -40,6 +44,9 @@ import java.util.zip.ZipFile;
 public class PackListener {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
+    private static final long STARTUP_CONVERSION_BUDGET_MILLIS = 35_000;
+    private static final int CONVERSION_THREADS = Math.max(1, Math.min(2,
+            (Runtime.getRuntime().availableProcessors() + 1) / 2));
     private static final ExecutorService THREAD_POOL;
 
     private final HydraulicImpl hydraulic;
@@ -47,7 +54,7 @@ public class PackListener {
 
     static {
         THREAD_POOL = Executors.newFixedThreadPool(
-            Math.max(1, Runtime.getRuntime().availableProcessors() * 3 / 8),
+            CONVERSION_THREADS,
             new ThreadFactoryBuilder()
                 .setNameFormat(Constants.MOD_NAME + " Conversion Thread #%d")
                 .setUncaughtExceptionHandler((thread, throwable) -> LOGGER.error("Uncaught exception in thread {}", thread.getName(), throwable))
@@ -60,7 +67,7 @@ public class PackListener {
         this.manager = manager;
 
         hydraulic.registerServerStop(server -> {
-            THREAD_POOL.shutdown(); // Prevents the server from locking up on stop
+            THREAD_POOL.shutdownNow(); // Staged archives make interruption safe on server stop.
         });
 
         warmVanillaPack();
@@ -93,13 +100,88 @@ public class PackListener {
         System.setProperty("packconverter.vanillaVersion", version);
 
         LOGGER.info("Pre-fetching vanilla pack for Minecraft {}...", version);
-        CompletableFuture.runAsync(
-                () -> VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)),
-                THREAD_POOL);
+        CompletableFuture.runAsync(() ->
+                VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)));
     }
 
     @Subscribe(postOrder = PostOrder.LATE)
     public void onLoadResourcePacks(GeyserDefineResourcePacksEvent event) {
+        long startedAt = System.nanoTime();
+        PackPlan plan;
+        LOGGER.info("Planning Hydraulic packs with {} conversion worker(s) and a {} ms startup budget",
+                CONVERSION_THREADS, STARTUP_CONVERSION_BUDGET_MILLIS);
+        CompletableFuture<PackPlan> planning = CompletableFuture.supplyAsync(this::planPacks, THREAD_POOL);
+        try {
+            plan = planning.get(STARTUP_CONVERSION_BUDGET_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException exception) {
+            planning.cancel(true);
+            LOGGER.error("Skipped Hydraulic pack planning after {} ms to keep server startup below the watchdog limit",
+                    STARTUP_CONVERSION_BUDGET_MILLIS);
+            return;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            LOGGER.error("Interrupted while planning Hydraulic packs");
+            return;
+        } catch (ExecutionException exception) {
+            LOGGER.error("Failed to plan Hydraulic packs", exception.getCause());
+            return;
+        }
+        LOGGER.info("Pack planning completed in {} ms [reuse={}, conversion={}]",
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                plan.reusable().size(), plan.toConvert().size());
+
+        for (PackRequest request : plan.reusable()) {
+            LOGGER.info("Reusing converted pack for mod {} [revision={}]", request.mod().id(), PackManager.PACK_GENERATION_REVISION);
+            event.register(ResourcePack.create(PackCodec.path(request.packPath())), PriorityOption.NORMAL);
+        }
+
+        List<PackRequest> packsToLoad = plan.toConvert();
+        if (packsToLoad.isEmpty()) {
+            return;
+        }
+
+        LOGGER.info("Found {} packs to convert!", packsToLoad.size());
+
+        List<CompletableFuture<PackResult>> futures = new ArrayList<>();
+        for (PackRequest request : packsToLoad) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                LOGGER.info("Converting pack for mod {}", request.mod().id());
+                try {
+                    return new PackResult(request.packPath(),
+                            this.manager.createPack(request.mod(), request.packPath(), request.fingerprint()));
+                } catch (Throwable t) {
+                    LOGGER.error("Failed to convert pack for mod {}", request.mod().id(), t);
+                    return new PackResult(request.packPath(), false);
+                }
+            }, THREAD_POOL));
+        }
+
+        List<PackResult> completed = awaitCompleted(futures, remainingBudgetMillis(startedAt));
+        int registered = 0;
+        for (PackResult result : completed) {
+            if (result.created()) {
+                event.register(ResourcePack.create(PackCodec.path(result.packPath())), PriorityOption.NORMAL);
+                registered++;
+            }
+        }
+
+        List<String> unfinishedMods = new ArrayList<>();
+        for (int index = 0; index < futures.size(); index++) {
+            if (!futures.get(index).isDone()) {
+                unfinishedMods.add(packsToLoad.get(index).mod().id());
+            }
+        }
+        if (!unfinishedMods.isEmpty()) {
+            futures.stream().filter(future -> !future.isDone()).forEach(future -> future.cancel(true));
+            LOGGER.error("Skipped {} pack conversion(s) after {} ms to keep server startup below the watchdog limit: {}; completed archives remain available on the next start",
+                    unfinishedMods.size(), STARTUP_CONVERSION_BUDGET_MILLIS, String.join(", ", unfinishedMods));
+        }
+
+        LOGGER.info("Registered {} of {} converted packs in {}", registered, packsToLoad.size(),
+                FormatUtil.humanReadableFormat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
+    }
+
+    private PackPlan planPacks() {
         // Check if hydraulic has updated since the last pack conversion
         // This is so we can regenerate packs on update in case the pack generation logic has changed
         ModInfo hydraulicMod = this.hydraulic.mod(Constants.MOD_ID);
@@ -111,7 +193,8 @@ public class PackListener {
         }
 
         // Go over all mods and load the pack or mark them for conversion
-        Map<String, PackRequest> packsToLoad = new HashMap<>();
+        List<PackRequest> reusable = new ArrayList<>();
+        List<PackRequest> packsToLoad = new ArrayList<>();
         for (ModInfo mod : this.hydraulic.mods()) {
             if (PackManager.IGNORED_MODS.contains(mod.id())) {
                 continue;
@@ -127,41 +210,45 @@ public class PackListener {
             Path packPath = storage.pack();
             String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
             if (this.hydraulic.isDev() || hydraulicUpdated || checkNeedsConversion(mod, packPath, fingerprint)) {
-                packsToLoad.put(mod.id(), new PackRequest(mod, packPath, fingerprint));
+                packsToLoad.add(new PackRequest(mod, packPath, fingerprint));
             } else {
-                // We don't need to convert the pack, just register it
-                LOGGER.info("Reusing converted pack for mod {} [revision={}]", mod.id(), PackManager.PACK_GENERATION_REVISION);
-                event.register(ResourcePack.create(PackCodec.path(packPath)), PriorityOption.NORMAL);
+                reusable.add(new PackRequest(mod, packPath, fingerprint));
             }
         }
+        return new PackPlan(reusable, packsToLoad);
+    }
 
-        if (packsToLoad.isEmpty()) {
-            return;
+    /** Waits only within the startup budget, then collects every completed result. */
+    static <T> List<T> awaitCompleted(List<CompletableFuture<T>> futures, long timeoutMillis) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        Set<T> completed = new LinkedHashSet<>();
+        for (CompletableFuture<T> future : futures) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                break;
+            }
+            try {
+                completed.add(future.get(remaining, TimeUnit.NANOSECONDS));
+            } catch (TimeoutException ignored) {
+                break;
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (ExecutionException | CancellationException exception) {
+                LOGGER.error("Pack conversion task failed before completion", exception);
+            }
         }
-
-        LOGGER.info("Found {} packs to convert!", packsToLoad.size());
-
-        long start = System.currentTimeMillis();
-
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (var entry : packsToLoad.entrySet()) {
-            futures.add(CompletableFuture.runAsync(() -> {
-                LOGGER.info("Converting pack for mod {}", entry.getKey());
-                try {
-                    PackRequest request = entry.getValue();
-                    if (this.manager.createPack(request.mod(), request.packPath(), request.fingerprint())) {
-                        event.register(ResourcePack.create(PackCodec.path(request.packPath())), PriorityOption.NORMAL);
-                    }
-                } catch (Throwable t) {
-                    LOGGER.error("Failed to convert pack for mod {}", entry.getKey(), t);
-                }
-            }, THREAD_POOL));
+        for (CompletableFuture<T> future : futures) {
+            if (future.isDone() && !future.isCompletedExceptionally() && !future.isCancelled()) {
+                completed.add(future.getNow(null));
+            }
         }
+        return List.copyOf(completed);
+    }
 
-        // Wait for all futures to complete
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-        LOGGER.info("Converted {} packs for mods in {}", packsToLoad.size(), FormatUtil.humanReadableFormat(System.currentTimeMillis() - start));
+    private static long remainingBudgetMillis(long startedAt) {
+        return Math.max(0, STARTUP_CONVERSION_BUDGET_MILLIS
+                - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
     }
 
     /**
@@ -208,6 +295,12 @@ public class PackListener {
     }
 
     private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {
+    }
+
+    private record PackPlan(List<PackRequest> reusable, List<PackRequest> toConvert) {
+    }
+
+    private record PackResult(Path packPath, boolean created) {
     }
 }
 

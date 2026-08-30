@@ -36,9 +36,12 @@ import team.unnamed.creative.model.Model;
 import team.unnamed.creative.serialize.minecraft.MinecraftResourcePackReader;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -59,7 +62,7 @@ public class PackManager {
      * Increment when the generated Bedrock-pack contract changes. This keeps
      * cached packs from surviving a Hydraulic update that changes conversion.
      */
-    public static final String PACK_GENERATION_REVISION = "20";
+    public static final String PACK_GENERATION_REVISION = "21";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -198,6 +201,7 @@ public class PackManager {
         int itemCount = this.modsToItems.get(mod.id()).size();
         int entityCount = this.modsToEntities.get(mod.id()).size();
         ConversionReport report = new ConversionReport();
+        Path stagedPack = stagedPackPath(packPath);
         LOGGER.info("Converting {} [blocks={}, items={}, entities={}, roots={}]", mod.id(), blockCount, itemCount, entityCount, mod.roots().size());
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
         pipelines.add(AssetConverters.create(new MetadataPackModule(mod, fingerprint)));
@@ -206,7 +210,7 @@ public class PackManager {
                 .packName(mod.name())
                 .logListener(new PackLogListener(LoggerFactory.getLogger(LOGGER.getName() + "/" + mod.id())))
                 .converters(pipelines)
-                .output(packPath)
+                .output(stagedPack)
                 .vanillaPackPath(vanillaPath)
                 .textureSubdirectory(mod.namespace())
                 .reflectionEntityIds(this.modsToEntities.get(mod.id()).stream()
@@ -214,6 +218,7 @@ public class PackManager {
                 .packageHandler(new PackPackager());
 
         converter.postProcessor((javaPack, bedrockPack) -> {
+            long postProcessStartedAt = System.nanoTime();
             JsonObject generationMarker = new JsonObject();
             generationMarker.addProperty("revision", PACK_GENERATION_REVISION);
             generationMarker.addProperty("fingerprint", fingerprint);
@@ -222,25 +227,31 @@ public class PackManager {
             generationMarker.addProperty("entities", entityCount);
             bedrockPack.addExtraFile(generationMarker, PACK_GENERATION_MARKER);
 
-            for (PackModule<?> module : this.modules) {
-                PackPostProcessContext context = new PackPostProcessContext(this.hydraulic, mod, module, converter, javaPack, bedrockPack, packPath, modelProvider, report);
-                if (!module.test(context)) {
-                    continue;
-                }
+            try {
+                for (PackModule<?> module : this.modules) {
+                    PackPostProcessContext context = new PackPostProcessContext(this.hydraulic, mod, module, converter, javaPack, bedrockPack, packPath, modelProvider, report);
+                    if (!module.test(context)) {
+                        continue;
+                    }
 
-                module.postProcess0(context);
+                    module.postProcess0(context);
+                }
+            } finally {
+                report.timing("post_process", (System.nanoTime() - postProcessStartedAt) / 1_000_000);
             }
         });
 
         try {
-            // Do not retain a stale archive if this conversion fails. A stale pack
-            // can describe old items/models and is worse than skipping one mod.
-            Files.deleteIfExists(packPath);
+            Files.deleteIfExists(stagedPack);
 
             for (final Path root : mod.roots()) {
+                long rootStartedAt = System.nanoTime();
                 converter.input(root, false).convert();
+                LOGGER.info("Conversion input {} root {} completed in {} ms", mod.id(), root,
+                        (System.nanoTime() - rootStartedAt) / 1_000_000);
             }
         } catch (IOException | RuntimeException exception) {
+            discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to convert mod {} to pack", mod.id(), exception);
             return false;
         }
@@ -249,17 +260,18 @@ public class PackManager {
         try {
             converter.pack();
         } catch (IOException | RuntimeException exception) {
+            discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to export pack for mod {}", mod.id(), exception);
             return false;
         }
         long packagedAt = System.nanoTime();
 
-        boolean created = Files.isRegularFile(packPath);
+        boolean created = Files.isRegularFile(stagedPack);
         if (created) {
             try {
-                PackArchiveValidator.Result validation = PackArchiveValidator.validate(packPath);
+                PackArchiveValidator.Result validation = PackArchiveValidator.validate(stagedPack);
                 if (!validation.valid()) {
-                    Files.deleteIfExists(packPath);
+                    discardStagedPack(stagedPack, mod.id());
                     LOGGER.error("Discarded invalid pack for {}: {}", mod.id(), validation.errors());
                     return false;
                 }
@@ -273,25 +285,51 @@ public class PackManager {
                 long assetsMillis = (convertedAt - startedAt) / 1_000_000;
                 long packageMillis = (packagedAt - convertedAt) / 1_000_000;
                 long validationMillis = (validatedAt - packagedAt) / 1_000_000;
+                long archiveBytes = Files.size(stagedPack);
+                report.timing("input", assetsMillis);
+                report.timing("package", packageMillis);
+                report.timing("validation", validationMillis);
+                report.timing("total", (validatedAt - startedAt) / 1_000_000);
                 LOGGER.info("Conversion report {} [blocks={}, items={}, entities={}, fallback={}, files={}, {} ms, {} bytes]", mod.id(),
                         blockCount, itemCount, entityCount, report.fallbackSummary(), validation.files(),
-                        (validatedAt - startedAt) / 1_000_000, Files.size(packPath));
+                        (validatedAt - startedAt) / 1_000_000, archiveBytes);
                 LOGGER.info("Conversion timings {} [assets={} ms, package={} ms, validation={} ms]", mod.id(),
                         assetsMillis, packageMillis, validationMillis);
+                publish(stagedPack, packPath);
                 Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(mod.id() + ".json");
-                Files.createDirectories(reportPath.getParent());
-                Files.writeString(reportPath, report.json(blockCount, itemCount, entityCount, assetsMillis, packageMillis, validationMillis).toString(), StandardCharsets.UTF_8);
-            } catch (IOException exception) {
                 try {
-                    Files.deleteIfExists(packPath);
-                } catch (IOException deleteException) {
-                    exception.addSuppressed(deleteException);
+                    Files.createDirectories(reportPath.getParent());
+                    Files.writeString(reportPath, report.json(blockCount, itemCount, entityCount, archiveBytes).toString(), StandardCharsets.UTF_8);
+                } catch (IOException exception) {
+                    LOGGER.warn("Could not write conversion report for {}", mod.id(), exception);
                 }
-                LOGGER.error("Discarded unreadable pack for {}", mod.id(), exception);
+            } catch (IOException exception) {
+                discardStagedPack(stagedPack, mod.id());
+                LOGGER.error("Discarded unreadable staged pack for {}", mod.id(), exception);
                 return false;
             }
         }
         return created;
+    }
+
+    static Path stagedPackPath(Path packPath) {
+        return packPath.resolveSibling(packPath.getFileName() + ".part");
+    }
+
+    static void publish(Path stagedPack, Path packPath) throws IOException {
+        try {
+            Files.move(stagedPack, packPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException ignored) {
+            Files.move(stagedPack, packPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void discardStagedPack(Path stagedPack, String modId) {
+        try {
+            Files.deleteIfExists(stagedPack);
+        } catch (IOException exception) {
+            LOGGER.warn("Could not remove incomplete staged pack for {} at {}", modId, stagedPack, exception);
+        }
     }
 
     private void callEvents(@NotNull Event event) {
