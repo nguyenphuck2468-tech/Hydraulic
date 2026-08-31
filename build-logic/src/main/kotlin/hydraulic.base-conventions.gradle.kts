@@ -4,6 +4,8 @@ plugins {
 }
 
 val minecraftVersion = project.property("minecraft_version") as String
+val hydraulicVersion = version.toString()
+val hydraulicDescription = description as String
 
 dependencies {
     compileOnly("org.checkerframework:checker-qual:4.1.0")
@@ -28,8 +30,8 @@ tasks {
             expand(
                 "id" to "hydraulic",
                 "name" to "Hydraulic",
-                "version" to project.version,
-                "description" to project.description as String,
+                "version" to hydraulicVersion,
+                "description" to hydraulicDescription,
                 "url" to "https://geysermc.org",
                 "author" to "GeyserMC",
                 "minecraft_version" to minecraftVersion

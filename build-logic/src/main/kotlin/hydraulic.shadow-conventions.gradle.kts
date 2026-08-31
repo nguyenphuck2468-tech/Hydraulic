@@ -5,22 +5,25 @@ plugins {
     id("com.gradleup.shadow")
 }
 
+val currentProjectName = project.name
+val licenseFile = rootProject.file("LICENSE")
+
 tasks {
     named<Jar>("jar") {
         archiveClassifier.set("unshaded")
-        from(project.rootProject.file("LICENSE"))
+        from(licenseFile)
     }
     val shadowJar = named<ShadowJar>("shadowJar") {
-        archiveBaseName.set(project.name)
+        archiveBaseName.set(currentProjectName)
         archiveVersion.set("")
         archiveClassifier.set("")
 
         val sJar: ShadowJar = this
 
         doFirst {
-            providedDependencies[project.name]?.forEach { string ->
+            providedDependencies[currentProjectName]?.forEach { string ->
                 sJar.dependencies {
-                    println("Excluding $string from ${project.name}")
+                    println("Excluding $string from $currentProjectName")
                     exclude(dependency(string))
                 }
             }

@@ -173,11 +173,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         description.add("geometry", collectGeometries(namespace, path, dimensions, pack));
 
         if (convertedAnimations.size() > 0) {
-            JsonObject animations = new JsonObject();
-            for (String name : convertedAnimations.keySet()) {
-                animations.addProperty(name, name);
-            }
-            description.add("animations", animations);
+            description.add("animations", animationBindings(convertedAnimations, refs));
         }
 
         if (refs != null) {
@@ -194,6 +190,19 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         clientEntity.addProperty("format_version", "1.10.0");
         clientEntity.add("minecraft:client_entity", clientEntityDescription(description));
         return clientEntity;
+    }
+
+    static JsonObject animationBindings(JsonObject convertedAnimations, AnimationRefs refs) {
+        JsonObject animations = new JsonObject();
+        for (String name : convertedAnimations.keySet()) {
+            animations.addProperty(name, name);
+        }
+        // Controllers use stable local aliases. Without these entries a
+        // two-state controller references "idle"/"walk" keys that the client
+        // entity never declared, so native animations never play.
+        if (refs != null && refs.idle() != null) animations.addProperty("idle", refs.idle());
+        if (refs != null && refs.walk() != null) animations.addProperty("walk", refs.walk());
+        return animations;
     }
 
     /**
@@ -401,7 +410,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 ? value.getAsString() : null;
     }
 
-    private record AnimationRefs(String idle, String walk) {
+    record AnimationRefs(String idle, String walk) {
     }
 
     record GeometryProfile(GeometryKind kind, String anchorBone, List<String> motionBones, int boneCount) {
@@ -902,7 +911,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * the GeckoAnimationConverter as {@code animations/<ns>.<name>.animation.json})
      * and maps every animation it declares onto itself.
      */
-    private JsonObject collectAnimations(String namespace, String path, BedrockResourcePack pack) {
+    static JsonObject collectAnimations(String namespace, String path, BedrockResourcePack pack) {
         JsonObject animations = new JsonObject();
 
         // The map is lazily created on the first addExtraFile, so it is null for
@@ -912,23 +921,52 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             return animations;
         }
 
-        byte[] converted = extraFiles.get("animations/" + namespace + "." + path + ".animation.json");
-        if (converted == null) {
-            return animations;
-        }
+        String exactFile = "animations/" + namespace + "." + path + ".animation.json";
+        List<Map.Entry<String, byte[]>> candidates = extraFiles.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith("animations/" + namespace + "."))
+                .filter(entry -> entry.getKey().endsWith(".animation.json"))
+                .sorted(Map.Entry.comparingByKey())
+                .toList();
 
-        try {
-            JsonElement parsed = JsonParser.parseString(new String(converted, StandardCharsets.UTF_8));
-            JsonObject declared = parsed.getAsJsonObject().getAsJsonObject("animations");
-            if (declared == null) return animations;
+        for (Map.Entry<String, byte[]> candidate : candidates) {
+            try {
+                JsonElement parsed = JsonParser.parseString(new String(candidate.getValue(), StandardCharsets.UTF_8));
+                JsonObject declared = parsed.getAsJsonObject().getAsJsonObject("animations");
+                if (declared == null) continue;
 
-            for (String name : declared.keySet()) {
-                animations.addProperty(name, name);
+                boolean exact = candidate.getKey().equals(exactFile);
+                boolean fileNamedForEntity = animationFileMatchesEntity(candidate.getKey(), path);
+                List<String> matchingNames = declared.keySet().stream()
+                        .filter(name -> animationNameMatchesEntity(name, path))
+                        .toList();
+                // A namespace with exactly one animation document is common in
+                // small mods; it is unambiguous even when the file is named
+                // animations.json instead of after the entity.
+                if (!exact && !fileNamedForEntity && matchingNames.isEmpty() && candidates.size() != 1) continue;
+
+                Iterable<String> names = exact || fileNamedForEntity || matchingNames.isEmpty()
+                        ? declared.keySet() : matchingNames;
+                for (String name : names) {
+                    animations.addProperty(name, name);
+                }
+            } catch (Exception ignored) {
+                // A malformed converted animation file must not break pack generation.
             }
-        } catch (Exception ignored) {
-            // A malformed converted animation file must not break pack generation.
         }
         return animations;
+    }
+
+    private static boolean animationFileMatchesEntity(String file, String entityPath) {
+        String normalized = file.toLowerCase(Locale.ROOT).replace('-', '_');
+        String entity = entityPath.toLowerCase(Locale.ROOT).replace('-', '_');
+        return normalized.contains("." + entity + ".") || normalized.contains("/" + entity + ".");
+    }
+
+    private static boolean animationNameMatchesEntity(String name, String entityPath) {
+        String normalized = name.toLowerCase(Locale.ROOT).replace('-', '_');
+        String entity = entityPath.toLowerCase(Locale.ROOT).replace('-', '_');
+        return normalized.equals(entity) || normalized.startsWith(entity + ".")
+                || normalized.contains("." + entity + ".") || normalized.endsWith("." + entity);
     }
 
     @Override

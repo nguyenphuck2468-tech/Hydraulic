@@ -33,6 +33,21 @@ class PackArchiveValidatorTest {
     }
 
     @Test
+    void rejectsOversizedJsonBeforeParsingIt() throws IOException {
+        Path archive = temporaryDirectory.resolve("oversized.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "animations/oversized.json", " ".repeat(8 * 1024 * 1024 + 1));
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertFalse(result.valid());
+        assertTrue(result.errors().stream().anyMatch(error -> error.startsWith("oversized JSON")));
+    }
+
+    @Test
     void acceptsACompleteSmallArchive() throws IOException {
         Path archive = temporaryDirectory.resolve("fixture.mcpack");
         try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {

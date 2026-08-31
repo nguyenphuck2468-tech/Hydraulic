@@ -5,7 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -18,6 +18,9 @@ import java.util.zip.ZipFile;
 /** Lightweight post-export checks for failures Bedrock otherwise reports only to clients. */
 public final class PackArchiveValidator {
     private static final int BEDROCK_PATH_WARNING_LENGTH = 80;
+    private static final int MAX_ARCHIVE_ENTRIES = 100_000;
+    private static final int MAX_JSON_ENTRY_BYTES = 8 * 1024 * 1024;
+    private static final long MAX_TOTAL_JSON_BYTES = 64L * 1024 * 1024;
 
     private PackArchiveValidator() {
     }
@@ -33,6 +36,7 @@ public final class PackArchiveValidator {
         Set<String> animationControllers = new HashSet<>();
         int files = 0;
         int assetFiles = 0;
+        long totalJsonBytes = 0;
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             if (zip.getEntry("manifest.json") == null) errors.add("missing manifest.json");
             if (zip.getEntry(PackManager.PACK_GENERATION_MARKER) == null) errors.add("missing " + PackManager.PACK_GENERATION_MARKER);
@@ -41,14 +45,32 @@ public final class PackArchiveValidator {
                 ZipEntry entry = entries.nextElement();
                 if (entry.isDirectory()) continue;
                 files++;
+                if (files > MAX_ARCHIVE_ENTRIES) {
+                    errors.add("archive contains too many files");
+                    break;
+                }
                 if (!isMetadataFile(entry.getName())) assetFiles++;
                 filesByPath.add(entry.getName());
                 if (entry.getName().length() >= BEDROCK_PATH_WARNING_LENGTH) {
                     warnings.add("long path " + entry.getName());
                 }
                 if (entry.getName().endsWith(".json")) {
-                    try (InputStreamReader reader = new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8)) {
-                        JsonElement parsed = JsonParser.parseReader(reader);
+                    if (entry.getSize() > MAX_JSON_ENTRY_BYTES) {
+                        errors.add("oversized JSON " + entry.getName());
+                        continue;
+                    }
+                    try (InputStream input = zip.getInputStream(entry)) {
+                        byte[] bytes = input.readNBytes(MAX_JSON_ENTRY_BYTES + 1);
+                        if (bytes.length > MAX_JSON_ENTRY_BYTES) {
+                            errors.add("oversized JSON " + entry.getName());
+                            continue;
+                        }
+                        totalJsonBytes += bytes.length;
+                        if (totalJsonBytes > MAX_TOTAL_JSON_BYTES) {
+                            errors.add("archive JSON exceeds validation budget");
+                            break;
+                        }
+                        JsonElement parsed = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8));
                         if (parsed.isJsonObject()) {
                             collectReferences(entry.getName(), parsed.getAsJsonObject(), entityReferences, atlasReferences, geometries, animations, animationControllers);
                         }

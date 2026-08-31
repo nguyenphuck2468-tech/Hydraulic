@@ -68,10 +68,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.BiFunction;
 
 @AutoService(PackModule.class)
 public class BlockPackModule extends PackModule<BlockPackModule> {
@@ -532,70 +530,20 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         }
 
         // Try and match the state
-        if (multiVariant == null) {
-            for (Selector selector : packState.multipart()) {
-                // Ignore none conditions
-                if (selector.condition() == Condition.NONE) {
-                    continue;
-                }
-
-                List<Condition> conditions = new ArrayList<>();
-                BiFunction<Boolean, Boolean, Boolean> comparator = (a, b) -> false;
-                if (selector.condition() instanceof Condition.And andCondition) {
-                    conditions.addAll(andCondition.conditions());
-                    comparator = Boolean::logicalAnd;
-                } else if (selector.condition() instanceof Condition.Or orCondition) {
-                    conditions.addAll(orCondition.conditions());
-                    comparator = Boolean::logicalOr;
-                } else if (selector.condition() instanceof Condition.Match) {
-                    conditions.add(selector.condition());
-                }
-
-                boolean first = true;
-                boolean result = true;
-                for (Condition condition : conditions) {
-                    if (!(condition instanceof Condition.Match match)) {
-                        context.logger().warn("Non match condition found in {}", blockLocation);
-                        continue;
-                    }
-
-                    Property<?> foundProperty = null;
-                    for (Property<?> property : state.getProperties()) {
-                        if (property.getName().equals(match.key())) {
-                            foundProperty = property;
-                            break;
-                        }
-                    }
-
-                    if (foundProperty == null) {
-                        result = false;
-                        continue;
-                    }
-
-                    boolean test = matchesStateValue(serializedStateValue(state, foundProperty), match.value().toString());
-                    if (!first) {
-                        result = comparator.apply(result, test);
-                    } else {
-                        result = test;
-                        first = false;
-                    }
-                }
-
-                if (result) {
-                    multiVariant = selector.variant();
-                    break;
-                }
+        if (multiVariant == null && !packState.multipart().isEmpty()) {
+            List<MultiVariant> matching = packState.multipart().stream()
+                    .filter(selector -> conditionMatches(state, selector.condition()))
+                    .map(Selector::variant)
+                    .toList();
+            if (matching.size() == 1) {
+                multiVariant = matching.getFirst();
+            } else if (matching.size() > 1) {
+                // Bedrock accepts one geometry component per permutation. Using
+                // the first Java multipart silently drops every other matching
+                // part. Fall back to the complete server VoxelShape until the
+                // models can be merged faithfully.
+                return null;
             }
-        }
-
-        // Get the default multipart variant if we have no match
-        if (multiVariant == null) {
-            Optional<Selector> selector = packState.multipart().stream().filter(multipart -> multipart.condition() == Condition.NONE).findFirst();
-            if (selector.isPresent()) {
-                multiVariant = selector.get().variant();
-            }
-
-            // LOGGER.warn("Missing multipart state conversion for block {} {}", blockLocation, state);
         }
 
         // We have a match! Now we need to find the model
@@ -617,6 +565,24 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         }
 
         return null;
+    }
+
+    static boolean conditionMatches(BlockState state, Condition condition) {
+        if (condition == Condition.NONE) return true;
+        if (condition instanceof Condition.And and) {
+            return and.conditions().stream().allMatch(child -> conditionMatches(state, child));
+        }
+        if (condition instanceof Condition.Or or) {
+            return or.conditions().stream().anyMatch(child -> conditionMatches(state, child));
+        }
+        if (condition instanceof Condition.Match match) {
+            for (Property<?> property : state.getProperties()) {
+                if (property.getName().equals(match.key())) {
+                    return matchesStateValue(serializedStateValue(state, property), match.value().toString());
+                }
+            }
+        }
+        return false;
     }
 
     private static String stableStateKey(BlockState state) {

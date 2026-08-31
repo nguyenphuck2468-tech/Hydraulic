@@ -6,14 +6,51 @@ import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Bon
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Description;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityPackModuleTest {
+    @TempDir
+    Path temporaryDirectory;
+
+    @Test
+    void declaresControllerAliasesForResolvedNativeAnimations() {
+        JsonObject converted = new JsonObject();
+        converted.addProperty("animation.example.beast.idle", "animation.example.beast.idle");
+        converted.addProperty("animation.example.beast.walk", "animation.example.beast.walk");
+
+        JsonObject bindings = EntityPackModule.animationBindings(converted,
+                new EntityPackModule.AnimationRefs("animation.example.beast.idle", "animation.example.beast.walk"));
+
+        assertEquals("animation.example.beast.idle", bindings.get("idle").getAsString());
+        assertEquals("animation.example.beast.walk", bindings.get("walk").getAsString());
+    }
+
+    @Test
+    void findsEntityAnimationsByDeclaredNameWhenSourceFileHasAGenericName() {
+        BedrockResourcePack pack = new BedrockResourcePack(temporaryDirectory);
+        JsonObject declared = new JsonObject();
+        declared.add("animation.example.beast.walk", new JsonObject());
+        declared.add("animation.example.other.idle", new JsonObject());
+        JsonObject document = new JsonObject();
+        document.add("animations", declared);
+        pack.addExtraFile(document, "animations/example.animations.animation.json");
+        pack.addExtraFile(animationDocument("animation.example.other.walk"),
+                "animations/example.other.animation.json");
+
+        JsonObject found = EntityPackModule.collectAnimations("example", "beast", pack);
+
+        assertTrue(found.has("animation.example.beast.walk"));
+        assertEquals(1, found.size());
+    }
+
     @Test
     void classifiesBoneHierarchyAndAnimatesStructuralLeaves() {
         Geometry geometry = geometry(
@@ -72,6 +109,14 @@ class EntityPackModuleTest {
         Geometry geometry = new Geometry();
         geometry.bones(List.of(bones));
         return geometry;
+    }
+
+    private static JsonObject animationDocument(String name) {
+        JsonObject declared = new JsonObject();
+        declared.add(name, new JsonObject());
+        JsonObject document = new JsonObject();
+        document.add("animations", declared);
+        return document;
     }
 
     private static ModelEntity model(Geometry geometry) {

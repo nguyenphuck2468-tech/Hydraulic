@@ -98,6 +98,20 @@ you're interested in helping out with Hydraulic.
    use `./gradlew :fabric:runServer`. Make sure you have Geyser in your `mods`
    folder along with Hydraulic.
 
+When changing PackConverter and Hydraulic together, publish the exact local
+PackConverter modules before building Hydraulic:
+
+```text
+PackConverter> gradlew :pack-schema-api:publishToMavenLocal :converter:publishToMavenLocal
+Hydraulic> gradlew build
+```
+
+Hydraulic intentionally does not use Gradle composite substitution here. The
+published `pack-schema-api` JAR embeds the generated Bedrock schema classes,
+while a raw composite project output does not; treating those classpaths as
+equivalent produced successful-looking source wiring followed by compile
+failures.
+
 NeoForge is included in the build and release artifacts. Its dedicated
    `runServer` development task includes Geyser and can be used for a local
    startup smoke test; still test the produced NeoForge JAR in its intended
