@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.UUID;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -97,6 +98,20 @@ public class PackUtil {
             }
         }
         return UUID.nameUUIDFromBytes(output.hash().asBytes());
+    }
+
+    /** Stable identity for the complete installed conversion context. */
+    public static UUID getContextUUID(Map<String, String> modFingerprints) {
+        StringBuilder context = new StringBuilder();
+        modFingerprints.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry ->
+                context.append(entry.getKey()).append('=').append(entry.getValue()).append('\n'));
+        return UUID.nameUUIDFromBytes(context.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** UUID visible to Bedrock; changes whenever any conversion input changes. */
+    public static UUID getPackUUID(String sourceFingerprint, String contextFingerprint, String minecraftVersion, String revision) {
+        String identity = sourceFingerprint + '\n' + contextFingerprint + '\n' + minecraftVersion + '\n' + revision;
+        return UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8));
     }
 }
 

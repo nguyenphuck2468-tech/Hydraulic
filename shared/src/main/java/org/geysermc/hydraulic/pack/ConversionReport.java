@@ -26,6 +26,10 @@ public final class ConversionReport {
         outcomes.merge(kind, 1, Integer::sum);
     }
 
+    public void outcome(String kind, int count) {
+        if (count > 0) outcomes.merge(kind, count, Integer::sum);
+    }
+
     public void outcome(String kind, String id) {
         outcome(kind);
         outcomeIds.computeIfAbsent(kind, ignored -> new java.util.ArrayList<>()).add(id);

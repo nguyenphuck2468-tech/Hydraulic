@@ -1,5 +1,7 @@
 package org.geysermc.hydraulic.entity;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityDimensions;
@@ -11,13 +13,19 @@ import org.geysermc.geyser.api.entity.data.GeyserEntityDataTypes;
 import org.geysermc.geyser.api.event.java.ServerSpawnEntityEvent;
 import org.geysermc.geyser.api.event.lifecycle.GeyserDefineEntitiesEvent;
 import org.geysermc.hydraulic.HydraulicImpl;
+import org.geysermc.hydraulic.pack.ClientPackTelemetry;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * Registers custom Bedrock entity definitions for every non-vanilla entity
@@ -37,8 +45,50 @@ public final class EntityEventRegistrar {
     private static final long POLL_TIMEOUT_MS = 300_000;
     private static final java.util.Set<String> PACK_BACKED_ENTITIES = ConcurrentHashMap.newKeySet();
 
-    static void markPackBacked(String entityId) {
+    public static void markPackBacked(String entityId) {
         PACK_BACKED_ENTITIES.add(entityId);
+    }
+
+    /** Starts a fresh Geyser pack-definition pass (including reloads). */
+    public static void resetPackBacked() {
+        PACK_BACKED_ENTITIES.clear();
+    }
+
+    /** Restores spawn substitutions from the pack that is actually reused. */
+    public static int restorePackBacked(Path packPath) {
+        int restored = 0;
+        try (ZipFile zip = new ZipFile(packPath.toFile())) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory() || !entry.getName().startsWith("entity/") || !entry.getName().endsWith(".entity.json")
+                        || entry.getSize() > 1024 * 1024) continue;
+                try (var input = zip.getInputStream(entry)) {
+                    byte[] json = input.readNBytes(1024 * 1024 + 1);
+                    if (json.length > 1024 * 1024) continue;
+                    JsonObject root = JsonParser.parseString(new String(json, StandardCharsets.UTF_8)).getAsJsonObject();
+                    JsonObject clientEntity = root.getAsJsonObject("minecraft:client_entity");
+                    JsonObject description = clientEntity == null ? null : clientEntity.getAsJsonObject("description");
+                    if (description == null || !description.has("identifier")) continue;
+                    String identifier = description.get("identifier").getAsString();
+                    if (!identifier.isBlank() && PACK_BACKED_ENTITIES.add(identifier)) restored++;
+                } catch (RuntimeException ignored) {
+                    // Pack validation reports malformed JSON; one broken entry
+                    // must not disable every valid cached entity.
+                }
+            }
+        } catch (IOException ignored) {
+            return restored;
+        }
+        return restored;
+    }
+
+    static void clearPackBackedForTest() {
+        resetPackBacked();
+    }
+
+    static boolean isPackBacked(String entityId) {
+        return PACK_BACKED_ENTITIES.contains(entityId);
     }
 
     /**
@@ -73,6 +123,7 @@ public final class EntityEventRegistrar {
             try {
                 if (GeyserApi.api() != null && GeyserApi.api().eventBus() != null) {
                     GeyserApi.api().eventBus().register(HydraulicImpl.instance(), this);
+                    GeyserApi.api().eventBus().register(HydraulicImpl.instance(), new ClientPackTelemetry());
                     LOGGER.info("Subscribed to Geyser entity events ahead of definition registration");
                     return;
                 }

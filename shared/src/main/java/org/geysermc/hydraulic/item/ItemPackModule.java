@@ -180,7 +180,9 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 context.report().outcome("item-dynamic-model", itemLocation.toString());
                 context.report().resolution("item-dynamic-model", itemLocation.toString(),
                         resolvedAsset.dynamicModelKinds() + " candidates=" + resolvedAsset.candidateTextures());
-                preserveDynamicTextures(context, bedrockPack, itemLocation, resolvedAsset.candidateTextures());
+                // Geyser cannot bind Java's dynamic predicates yet. Exporting
+                // anonymous _dynamic_N atlas entries only bloats every client
+                // download without ever selecting those textures.
             }
 
             Model baseModel = assets.model(Key.key(itemModelLocation.getNamespace(), "item/" + itemModelLocation.getPath()));
@@ -279,17 +281,6 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         context.report().fallback("item-source-texture");
         context.report().outcome("item-source-texture-recovery", item.toString());
         context.report().resolution("item-source-texture-recovery", item.toString(), texture.source());
-    }
-
-    /** Keeps every dynamic branch texture addressable even when Geyser cannot express the Java property yet. */
-    private static void preserveDynamicTextures(PackPostProcessContext<?> context, BedrockResourcePack pack,
-                                                Identifier item, List<Key> candidates) {
-        int index = 0;
-        for (Key candidate : candidates) {
-            ItemTexture texture = writeItemTexture(context, pack, candidate);
-            if (texture == null) continue;
-            pack.addItemTexture(item + "_dynamic_" + index++, texture.path());
-        }
     }
 
     private static List<TextureFallback> findFallbackTextures(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation,

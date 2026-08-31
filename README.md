@@ -44,6 +44,20 @@ NeoForge. A complete `.mcpack` contains a generation marker with the source
 fingerprint. A metadata-only result is stored as an adjacent
 `<mod-id>.mcpack.empty.json` marker instead of being registered with Geyser.
 
+Choose the client resource budget in `config/hydraulic/pack-profile.txt`.
+`lite` limits textures to a 256-pixel edge and 64 million pixels per mod pack;
+`balanced` (the default) uses a 1024-pixel edge and 256 million pixels; `full`
+preserves source resolution. Changing this value invalidates the generated
+pack identity so Bedrock does not retain content from another profile.
+To reduce negotiation and import work, `lite` also omits packs from mods that
+own no custom block, item, or entity; use `balanced` if such a library mod
+provides shared sounds, UI, or textures required by another pack.
+
+Per-client logs now mark session initialization, pack offer, Java login, world
+join, and disconnect. Geyser's public API does not expose separate download,
+verify, import, and apply callbacks, so `pack offer -> login` is intentionally
+reported as their combined client pack-processing time.
+
 On a normal, unchanged restart, the startup log should contain a planning
 line such as:
 

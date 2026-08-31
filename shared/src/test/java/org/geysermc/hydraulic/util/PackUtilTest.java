@@ -8,8 +8,22 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class PackUtilTest {
+    @Test
+    void packIdentityTracksWholeConversionContext() {
+        var firstContext = PackUtil.getContextUUID(java.util.Map.of("a", "1", "b", "2"));
+        var reorderedContext = PackUtil.getContextUUID(new java.util.LinkedHashMap<>(java.util.Map.of("b", "2", "a", "1")));
+        var changedContext = PackUtil.getContextUUID(java.util.Map.of("a", "1", "b", "3"));
+
+        assertEquals(firstContext, reorderedContext);
+        assertNotEquals(PackUtil.getPackUUID("source", firstContext.toString(), "26.2", "23"),
+                PackUtil.getPackUUID("source", changedContext.toString(), "26.2", "23"));
+        assertNotEquals(PackUtil.getPackUUID("source", firstContext.toString(), "26.2", "23"),
+                PackUtil.getPackUUID("source", firstContext.toString(), "26.2", "24"));
+    }
+
     @TempDir
     Path temporaryDirectory;
 

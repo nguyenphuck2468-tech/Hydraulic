@@ -13,6 +13,7 @@ import org.geysermc.geyser.api.pack.PackCodec;
 import org.geysermc.geyser.api.pack.ResourcePack;
 import org.geysermc.geyser.api.pack.option.PriorityOption;
 import org.geysermc.hydraulic.Constants;
+import org.geysermc.hydraulic.entity.EntityEventRegistrar;
 import org.geysermc.hydraulic.util.IOUtil;
 import org.geysermc.hydraulic.HydraulicImpl;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
@@ -32,6 +33,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -106,6 +108,7 @@ public class PackListener {
     @Subscribe(postOrder = PostOrder.LATE)
     public void onLoadResourcePacks(GeyserDefineResourcePacksEvent event) {
         long startedAt = System.nanoTime();
+        EntityEventRegistrar.resetPackBacked();
         PackPlan plan;
         LOGGER.info("Planning Hydraulic packs with {} conversion worker(s) and a {} ms startup budget",
                 CONVERSION_THREADS, STARTUP_CONVERSION_BUDGET_MILLIS);
@@ -132,11 +135,15 @@ public class PackListener {
 
         for (PackRequest request : plan.reusable()) {
             LOGGER.info("Reusing converted pack for mod {} [revision={}]", request.mod().id(), PackManager.PACK_GENERATION_REVISION);
+            int restoredEntities = EntityEventRegistrar.restorePackBacked(request.packPath());
+            if (restoredEntities > 0) {
+                LOGGER.info("Restored {} pack-backed entities for mod {}", restoredEntities, request.mod().id());
+            }
             event.register(ResourcePack.create(PackCodec.path(request.packPath())), PriorityOption.NORMAL);
         }
-
         List<PackRequest> packsToLoad = plan.toConvert();
         if (packsToLoad.isEmpty()) {
+            logDeliveryPlan(plan.reusable().stream().map(PackRequest::packPath).toList());
             logSummary(plan, List.of(), 0, 0, List.of());
             return;
         }
@@ -186,18 +193,18 @@ public class PackListener {
         LOGGER.info("Registered {} of {} converted packs in {}", registered, packsToLoad.size(),
                 FormatUtil.humanReadableFormat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
         logSummary(plan, completed, registered, newlySkippedEmpty, unfinishedMods);
+        List<Path> delivered = new ArrayList<>(plan.reusable().stream().map(PackRequest::packPath).toList());
+        completed.stream().filter(result -> result.outcome() == PackManager.PackCreationResult.CREATED)
+                .map(PackResult::packPath).forEach(delivered::add);
+        logDeliveryPlan(delivered);
     }
 
     private PackPlan planPacks() {
-        // Check if hydraulic has updated since the last pack conversion
-        // This is so we can regenerate packs on update in case the pack generation logic has changed
-        ModInfo hydraulicMod = this.hydraulic.mod(Constants.MOD_ID);
-        String hydraulicFingerprint = PackUtil.getModUUID(hydraulicMod.roots()).toString();
-        boolean hydraulicUpdated = needsConversion(this.hydraulic.modStorage(hydraulicMod).pack(), hydraulicFingerprint);
-
-        if (hydraulicUpdated) {
-            LOGGER.info("Hydraulic has updated since the last pack conversion, regenerating all packs!");
-        }
+        Map<String, String> sourceFingerprints = this.hydraulic.mods().stream()
+                .collect(java.util.stream.Collectors.toMap(ModInfo::id,
+                        mod -> PackUtil.getModUUID(mod.roots()).toString(), (left, right) -> right,
+                        java.util.TreeMap::new));
+        String contextFingerprint = PackUtil.getContextUUID(sourceFingerprints).toString();
 
         // Go over all mods and load the pack or mark them for conversion
         List<PackRequest> reusable = new ArrayList<>();
@@ -216,10 +223,10 @@ public class PackListener {
             ModStorage storage = this.hydraulic.modStorage(mod);
 
             Path packPath = storage.pack();
-            String fingerprint = PackUtil.getModUUID(mod.roots()).toString();
+            String fingerprint = PackUtil.getPackUUID(sourceFingerprints.get(mod.id()), contextFingerprint,
+                    SharedConstants.getCurrentVersion().id(), PackManager.PACK_GENERATION_REVISION + ":" + manager.profile().id()).toString();
             PackRequest request = new PackRequest(mod, packPath, fingerprint);
-            CacheStatus status = this.hydraulic.isDev() || hydraulicUpdated
-                    ? CacheStatus.CONVERT : cacheStatus(packPath, fingerprint);
+            CacheStatus status = this.hydraulic.isDev() ? CacheStatus.CONVERT : cacheStatus(packPath, fingerprint);
             switch (status) {
                 case REUSE -> reusable.add(request);
                 case SKIPPED_EMPTY -> cachedEmpty.add(request);
@@ -375,6 +382,18 @@ public class PackListener {
         LOGGER.info("Quality: {} full native geometries | {} native geometries with generic animation | {} hitbox geometry fallbacks | {} unresolved item assets",
                 quality.fullNativeGeometries(), quality.nativeGeometriesWithGenericAnimation(), quality.hitboxGeometryFallbacks(),
                 quality.unresolvedItemAssets());
+    }
+
+    private static void logDeliveryPlan(List<Path> packs) {
+        long bytes = 0;
+        for (Path pack : packs) {
+            try {
+                bytes += Files.size(pack);
+            } catch (IOException ignored) {
+            }
+        }
+        LOGGER.info("Bedrock delivery plan: {} pack(s), {} bytes; client download/import/apply timing requires a real Bedrock session",
+                packs.size(), bytes);
     }
 
     private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {

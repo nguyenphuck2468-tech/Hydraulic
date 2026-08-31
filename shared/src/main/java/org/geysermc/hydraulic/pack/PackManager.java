@@ -46,6 +46,8 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -69,7 +71,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "23";
+    public static final String PACK_GENERATION_REVISION = "24";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -90,6 +92,7 @@ public class PackManager {
 
     private final HydraulicImpl hydraulic;
     private final Path vanillaPath;
+    private final PackProfile profile;
     private final List<PackModule<?>> modules = new ArrayList<>();
 
     private final ListMultimap<String, ModInfo> namespacesToMods = MultimapBuilder.hashKeys().arrayListValues(1).build();
@@ -104,6 +107,8 @@ public class PackManager {
     public PackManager(HydraulicImpl hydraulic) {
         this.hydraulic = hydraulic;
         this.vanillaPath = hydraulic.dataFolder(Constants.MOD_ID).resolve("cache/vanilla-assets.zip");
+        this.profile = PackProfile.load(hydraulic.dataFolder(Constants.MOD_ID), LOGGER);
+        LOGGER.info("Hydraulic pack profile: {}", this.profile.id());
     }
 
     /**
@@ -208,6 +213,11 @@ public class PackManager {
         ConversionReport report = new ConversionReport();
         Path stagedPack = stagedPackPath(packPath);
         LOGGER.info("Converting {} [blocks={}, items={}, entities={}, roots={}]", mod.id(), blockCount, itemCount, entityCount, mod.roots().size());
+        if (profile == PackProfile.LITE && blockCount == 0 && itemCount == 0 && entityCount == 0) {
+            cacheMetadataOnlyPack(packPath, fingerprint, mod.id());
+            LOGGER.info("Lite profile omitted resource-only pack for mod {}", mod.id());
+            return PackCreationResult.METADATA_ONLY;
+        }
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
         pipelines.add(AssetConverters.create(new MetadataPackModule(mod, fingerprint)));
 
@@ -230,6 +240,7 @@ public class PackManager {
             JsonObject generationMarker = new JsonObject();
             generationMarker.addProperty("revision", PACK_GENERATION_REVISION);
             generationMarker.addProperty("fingerprint", fingerprint);
+            generationMarker.addProperty("profile", profile.id());
             generationMarker.addProperty("blocks", blockCount);
             generationMarker.addProperty("items", itemCount);
             generationMarker.addProperty("entities", entityCount);
@@ -244,6 +255,11 @@ public class PackManager {
 
                     module.postProcess0(context);
                 }
+                PackTextureOptimizer.Result optimized = PackTextureOptimizer.optimize(bedrockPack.directory(), profile);
+                report.resolution("pack-profile", "selected", profile.id());
+                report.resolution("texture-pixels", "before", Long.toString(optimized.originalPixels()));
+                report.resolution("texture-pixels", "after", Long.toString(optimized.outputPixels()));
+                report.outcome("texture-resized", optimized.resized());
             } finally {
                 report.timing("post_process", (System.nanoTime() - postProcessStartedAt) / 1_000_000);
             }
@@ -413,8 +429,27 @@ public class PackManager {
             if (jar != null) classpath.add(jar);
         }
         Arrays.stream(System.getProperty("java.class.path", "").split(java.io.File.pathSeparator))
-                .map(Path::of).filter(Files::isRegularFile).forEach(classpath::add);
+                .map(Path::of).filter(Files::exists).forEach(classpath::add);
+        // Minecraft exposes JOML through the launcher rather than java.class.path.
+        // The reflection loader is intentionally isolated, so pass that exact
+        // runtime location instead of bundling a second, potentially incompatible
+        // JOML copy into Hydraulic.
+        addCodeSource(classpath, "org.joml.Quaternionfc");
+        addCodeSource(classpath, "org.joml.Matrix4fc");
         return new ReflectionInput(sourceJar, classpath, Files.isRegularFile(clientRuntime) ? clientRuntime : null);
+    }
+
+    static void addCodeSource(List<Path> classpath, String className) {
+        try {
+            Class<?> type = Class.forName(className, false, PackManager.class.getClassLoader());
+            if (type.getProtectionDomain() == null || type.getProtectionDomain().getCodeSource() == null) return;
+            URI location = type.getProtectionDomain().getCodeSource().getLocation().toURI();
+            Path path = Path.of(location);
+            if ((Files.isRegularFile(path) || Files.isDirectory(path)) && !classpath.contains(path)) classpath.add(path);
+        } catch (ClassNotFoundException | LinkageError | SecurityException | URISyntaxException ignored) {
+            // The parser will emit its normal per-entity diagnostic if an
+            // optional model-library dependency is genuinely unavailable.
+        }
     }
 
     enum PackCreationResult {
@@ -588,5 +623,9 @@ public class PackManager {
 
     public Path getVanillaPath() {
         return vanillaPath;
+    }
+
+    PackProfile profile() {
+        return profile;
     }
 }
