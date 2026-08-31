@@ -79,6 +79,9 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     private final Set<String> emptyModels = new HashSet<>();
     private final Set<Identifier> fallbackBlocks = new HashSet<>();
     private final Map<String, String> fallbackGeometryIds = new HashMap<>();
+    private final Map<String, ModelDefinition> resolvedModels = new HashMap<>();
+    private final Set<String> resolvedModelStates = new HashSet<>();
+    private final Map<String, Set<String>> mergedMultipartStates = new HashMap<>();
 
     public BlockPackModule() {
         this.listenOn(GeyserDefineCustomBlocksEvent.class, this::onDefineCustomBlocks);
@@ -88,8 +91,23 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     }
 
     private void preProcess(@NotNull PackPreProcessContext<BlockPackModule> context) {
+        // Model providers and source packs belong to the current mod context.
+        // Never retain their resolved models while advancing to the next mod.
+        this.resolvedModels.clear();
+        this.resolvedModelStates.clear();
+
         for (var blockState : context.assets(ResourcePack::blockStates)) {
             this.blockStates.put(blockState.key().toString(), new StateDefinition(blockState, context.modelProvider()));
+        }
+
+        // Resolve multipart models before PackConverter starts. Compatible parts
+        // are inserted into the source pack so the normal model pipeline converts
+        // them exactly like any other model.
+        for (Block block : context.registryValues(BuiltInRegistries.BLOCK)) {
+            Identifier blockLocation = BuiltInRegistries.BLOCK.getKey(block);
+            for (BlockState state : block.getStateDefinition().getPossibleStates()) {
+                getModel(context, blockLocation, state);
+            }
         }
 
         ModStorage storage = context.storage();
@@ -192,6 +210,9 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         fallbackGeometryPath(geometry));
                 context.report().fallback("block-shape");
             }
+        }
+        for (String state : mergedMultipartStates.getOrDefault(context.mod().id(), Set.of())) {
+            context.report().outcome("block-multipart-merged", state);
         }
     }
 
@@ -514,6 +535,16 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
     @Nullable
     private ModelDefinition getModel(@NotNull PackContext<?> context, @NotNull Identifier blockLocation, @NotNull BlockState state) {
+        String stateKey = fallbackKey(blockLocation, state);
+        if (resolvedModelStates.contains(stateKey)) return resolvedModels.get(stateKey);
+        ModelDefinition resolved = resolveModel(context, blockLocation, state);
+        resolvedModelStates.add(stateKey);
+        if (resolved != null) resolvedModels.put(stateKey, resolved);
+        return resolved;
+    }
+
+    @Nullable
+    private ModelDefinition resolveModel(@NotNull PackContext<?> context, @NotNull Identifier blockLocation, @NotNull BlockState state) {
         StateDefinition definition = this.blockStates.get(blockLocation.toString());
         if (definition == null) {
             context.logger().warn("Missing blockstate for block {}", blockLocation);
@@ -531,18 +562,19 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
         // Try and match the state
         if (multiVariant == null && !packState.multipart().isEmpty()) {
-            List<MultiVariant> matching = packState.multipart().stream()
+            List<Variant> matching = packState.multipart().stream()
                     .filter(selector -> conditionMatches(state, selector.condition()))
                     .map(Selector::variant)
+                    .filter(variant -> !variant.variants().isEmpty())
+                    .map(variant -> stableVariant(state, variant))
                     .toList();
             if (matching.size() == 1) {
-                multiVariant = matching.getFirst();
-            } else if (matching.size() > 1) {
-                // Bedrock accepts one geometry component per permutation. Using
-                // the first Java multipart silently drops every other matching
-                // part. Fall back to the complete server VoxelShape until the
-                // models can be merged faithfully.
-                return null;
+                Variant variant = matching.getFirst();
+                Model model = definition.modelProvider().model(variant.model());
+                return model == null ? null : new ModelDefinition(model, variant);
+            } else if (matching.size() > 1 && context instanceof PackPreProcessContext<?> preContext) {
+                ModelDefinition merged = mergeMultipart(preContext, definition, blockLocation, state, matching);
+                if (merged != null) return merged;
             }
         }
 
@@ -552,8 +584,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             // cannot select per-position randomness, so choose one stable
             // variant per complete block state instead of always rendering the
             // first declaration.
-            int variantIndex = Math.floorMod(stableStateKey(state).hashCode(), multiVariant.variants().size());
-            Variant variant = multiVariant.variants().get(variantIndex);
+            Variant variant = stableVariant(state, multiVariant);
             Key modelKey = variant.model();
 
             Model model = definition.modelProvider().model(modelKey);
@@ -565,6 +596,53 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         }
 
         return null;
+    }
+
+    private ModelDefinition mergeMultipart(PackPreProcessContext<?> context, StateDefinition definition,
+                                           Identifier blockLocation, BlockState state, List<Variant> variants) {
+        Variant transform = variants.getFirst();
+        if (variants.stream().anyMatch(variant -> variant.x() != transform.x()
+                || variant.y() != transform.y() || variant.uvLock() != transform.uvLock())) return null;
+
+        List<Model> stitched = new ArrayList<>();
+        PackLogListener logger = new PackLogListener(context.logger());
+        for (Variant variant : variants) {
+            Model source = definition.modelProvider().model(variant.model());
+            if (source == null) return null;
+            Model model = new ModelStitcher(definition.modelProvider(), source, logger).stitch();
+            if (model == null) return null;
+            stitched.add(model);
+        }
+
+        String stable = stableStateKey(state);
+        Key key = Key.key(blockLocation.getNamespace(), "block/hydraulic_merged/" + blockLocation.getPath()
+                + "_" + Integer.toUnsignedString(stable.hashCode(), 36));
+        Model merged = mergeCompatibleModels(stitched, key);
+        if (merged == null || context.packs().isEmpty()) return null;
+
+        ResourcePack owner = context.packs().stream()
+                .filter(pack -> pack.blockState(Key.key(blockLocation.getNamespace(), blockLocation.getPath())) != null)
+                .findFirst().orElse(context.packs().iterator().next());
+        owner.model(merged);
+        mergedMultipartStates.computeIfAbsent(context.mod().id(), ignored -> new HashSet<>())
+                .add(blockLocation + "|" + stable);
+        context.logger().info("Merged {} compatible multipart models for {} [{}]", variants.size(), blockLocation, stable);
+        return new ModelDefinition(merged, transform.toBuilder().model(key).build());
+    }
+
+    static Model mergeCompatibleModels(List<Model> models, Key key) {
+        if (models.isEmpty()) return null;
+        Model first = models.getFirst();
+        if (models.stream().anyMatch(model -> !model.textures().equals(first.textures()))) return null;
+        List<team.unnamed.creative.model.Element> elements = models.stream()
+                .flatMap(model -> model.elements().stream())
+                .toList();
+        return first.toBuilder().key(key).parent(null).elements(elements).build();
+    }
+
+    private static Variant stableVariant(BlockState state, MultiVariant variants) {
+        int variantIndex = Math.floorMod(stableStateKey(state).hashCode(), variants.variants().size());
+        return variants.variants().get(variantIndex);
     }
 
     static boolean conditionMatches(BlockState state, Condition condition) {

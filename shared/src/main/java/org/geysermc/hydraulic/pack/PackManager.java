@@ -21,6 +21,7 @@ import org.geysermc.hydraulic.pack.context.PackEventContext;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.pack.converter.CustomModelConverter;
+import org.geysermc.hydraulic.util.IOUtil;
 import org.geysermc.hydraulic.pack.modules.MetadataPackModule;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.pack.converter.PackConverter;
@@ -68,7 +69,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "22";
+    public static final String PACK_GENERATION_REVISION = "23";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -374,7 +375,7 @@ public class PackManager {
     Quality qualityFor(String modId) {
         Path report = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(modId + ".json");
         try {
-            return qualityFromReport(JsonParser.parseString(Files.readString(report, StandardCharsets.UTF_8)).getAsJsonObject());
+            return qualityFromReport(JsonParser.parseString(IOUtil.readString(report, StandardCharsets.UTF_8, 8 * 1024 * 1024)).getAsJsonObject());
         } catch (Exception ignored) {
             return Quality.EMPTY;
         }

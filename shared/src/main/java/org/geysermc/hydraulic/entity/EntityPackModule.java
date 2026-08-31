@@ -15,6 +15,7 @@ import org.geysermc.hydraulic.pack.PackModule;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.hydraulic.util.GeoUtil;
+import org.geysermc.hydraulic.util.IOUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
@@ -382,7 +383,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 return;
             }
 
-            JsonObject entities = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8))
+            JsonObject entities = JsonParser.parseString(IOUtil.readString(path, StandardCharsets.UTF_8, 1024 * 1024))
                     .getAsJsonObject().getAsJsonObject("entities");
             if (entities == null) {
                 return;
@@ -764,7 +765,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
     private static SourceGeometryAsset sourceGeometryAsset(String namespace, Path source) {
         try {
-            ModelEntity model = Constants.GSON.fromJson(Files.readString(source, StandardCharsets.UTF_8), ModelEntity.class);
+            ModelEntity model = Constants.GSON.fromJson(IOUtil.readString(source, StandardCharsets.UTF_8, 8 * 1024 * 1024), ModelEntity.class);
             if (model == null || model.geometry() == null || model.geometry().isEmpty()) return null;
             String name = source.getFileName().toString();
             return new SourceGeometryAsset(namespace, source.toString(), name.substring(0, name.length() - ".geo.json".length()), model);

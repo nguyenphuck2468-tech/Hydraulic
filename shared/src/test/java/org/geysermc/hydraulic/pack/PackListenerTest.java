@@ -80,6 +80,14 @@ class PackListenerTest {
         assertTrue(PackListener.needsConversion(archive, fingerprint));
     }
 
+    @Test
+    void oversizedMetadataOnlyMarkerIsNeverTrusted() throws IOException {
+        Path packPath = temporaryDirectory.resolve("empty.mcpack");
+        Files.writeString(PackListener.metadataOnlyMarkerPath(packPath), " ".repeat(64 * 1024 + 1));
+
+        assertEquals(PackListener.CacheStatus.CONVERT, PackListener.cacheStatus(packPath, "fingerprint"));
+    }
+
     private Path archive(String fileName, String fingerprint, boolean includeAsset) throws IOException {
         Path archive = temporaryDirectory.resolve(fileName);
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {

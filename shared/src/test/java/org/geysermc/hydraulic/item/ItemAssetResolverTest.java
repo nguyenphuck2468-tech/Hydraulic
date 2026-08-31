@@ -68,6 +68,28 @@ class ItemAssetResolverTest {
         assertEquals(List.of("example:block/display"), fromBlockState.textureLayers().stream().map(Object::toString).toList());
     }
 
+    @Test
+    void retainsEverySelectAndRangeCandidateForDiagnostics() throws IOException {
+        write("assets/example/items/tool.json", """
+                {"model":{"type":"minecraft:select","cases":[
+                  {"when":"a","model":{"type":"minecraft:model","model":"example:item/a"}},
+                  {"when":"b","model":{"type":"minecraft:range_dispatch","entries":[
+                    {"threshold":0.5,"model":{"type":"minecraft:model","model":"example:item/b"}}
+                  ],"fallback":{"type":"minecraft:model","model":"example:item/c"}}}
+                ]}}
+                """);
+        write("assets/example/models/item/a.json", "{\"textures\":{\"layer0\":\"example:item/a\"}}");
+        write("assets/example/models/item/b.json", "{\"textures\":{\"layer0\":\"example:item/b\"}}");
+        write("assets/example/models/item/c.json", "{\"textures\":{\"layer0\":\"example:item/c\"}}");
+
+        ItemAssetResolver.ResolvedItemAsset resolved = ItemAssetResolver.resolve(mod(), Identifier.fromNamespaceAndPath("example", "tool"));
+
+        assertEquals(List.of("select", "range_dispatch"), resolved.dynamicModelKinds());
+        assertEquals(List.of("example:item/a", "example:item/b", "example:item/c"),
+                resolved.candidateTextures().stream().map(Object::toString).toList());
+        assertEquals("dynamic-item-model", resolved.reasonCode());
+    }
+
     private ModInfo mod() {
         return new ModInfo("example", "example", "Example", "1", null, List.of(temporaryDirectory));
     }

@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import org.apache.commons.lang3.StringUtils;
 import org.geysermc.hydraulic.Constants;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
+import org.geysermc.hydraulic.util.IOUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.Manifest;
 import org.geysermc.pack.bedrock.resource.manifest.Header;
@@ -18,12 +19,12 @@ import team.unnamed.creative.metadata.pack.PackMeta;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
 public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConverter<ModInfo, Manifest>, AssetCombiner<Manifest> {
+    private static final int MAX_ICON_BYTES = 16 * 1024 * 1024;
     private final ModInfo modInfo;
     private final String packUuid;
 
@@ -78,10 +79,10 @@ public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConvert
         // Copy the icon if it exists or copy the fallback icon
         try {
             if (this.modInfo.iconPath() != null) {
-                pack.icon(Files.readAllBytes(this.modInfo.iconPath()));
+                pack.icon(IOUtil.readBytes(this.modInfo.iconPath(), MAX_ICON_BYTES));
             } else {
                 try (InputStream stream = MetadataPackModule.class.getClassLoader().getResourceAsStream("unknown.png")) {
-                    pack.icon(stream.readAllBytes());
+                    pack.icon(stream.readNBytes(MAX_ICON_BYTES + 1));
                 }
             }
         } catch (IOException ignored) {

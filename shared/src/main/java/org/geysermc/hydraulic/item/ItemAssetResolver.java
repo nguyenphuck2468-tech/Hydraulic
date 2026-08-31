@@ -6,8 +6,8 @@ import com.google.gson.JsonParser;
 import net.kyori.adventure.key.Key;
 import net.minecraft.resources.Identifier;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
+import org.geysermc.hydraulic.util.IOUtil;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -20,6 +20,7 @@ import java.util.Set;
 
 /** Resolves ordinary JSON item models without assuming a mod or renderer framework. */
 final class ItemAssetResolver {
+    private static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
     private ItemAssetResolver() {
     }
 
@@ -61,18 +62,36 @@ final class ItemAssetResolver {
                     .filter(java.util.Objects::nonNull)
                     .findFirst().ifPresent(layers::add);
         }
+        List<Key> candidates = state.candidateTextures.stream()
+                .map(value -> resolveTexture(value, state, new HashSet<>()))
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
         String reason = state.specialRenderer ? "special-renderer"
                 : state.customTint ? "custom-tint"
                 : state.unresolvedParent ? "unresolved-parent"
+                : !state.dynamicModelKinds.isEmpty() && candidates.size() > 1 ? "dynamic-item-model"
                 : layers.isEmpty() ? "missing-texture" : "layered-texture";
-        return new ResolvedItemAsset(List.copyOf(layers), reason);
+        return new ResolvedItemAsset(List.copyOf(layers), reason, candidates, List.copyOf(state.dynamicModelKinds));
     }
 
     private static void scanItemDefinition(JsonElement element, State state) {
-        if (element == null || !element.isJsonObject()) return;
+        if (element == null) return;
+        if (element.isJsonArray()) {
+            for (JsonElement child : element.getAsJsonArray()) scanItemDefinition(child, state);
+            return;
+        }
+        if (!element.isJsonObject()) return;
         JsonObject object = element.getAsJsonObject();
         String type = string(object, "type");
-        if (type != null && type.toLowerCase(java.util.Locale.ROOT).contains("special")) state.specialRenderer = true;
+        if (type != null) {
+            String normalizedType = type.toLowerCase(java.util.Locale.ROOT);
+            if (normalizedType.contains("special")) state.specialRenderer = true;
+            if (normalizedType.contains("range_dispatch")) state.dynamicModelKinds.add("range_dispatch");
+            else if (normalizedType.contains("select")) state.dynamicModelKinds.add("select");
+            else if (normalizedType.contains("condition")) state.dynamicModelKinds.add("condition");
+            else if (normalizedType.contains("composite")) state.dynamicModelKinds.add("composite");
+        }
         if (object.has("tints") || object.has("tint")) state.customTint = true;
 
         JsonElement model = object.get("model");
@@ -98,7 +117,9 @@ final class ItemAssetResolver {
         if (textures != null) {
             for (Map.Entry<String, JsonElement> entry : textures.entrySet()) {
                 if (entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isString()) {
-                    state.textures.putIfAbsent(entry.getKey(), entry.getValue().getAsString());
+                    String value = entry.getValue().getAsString();
+                    state.textures.putIfAbsent(entry.getKey(), value);
+                    state.candidateTextures.add(value);
                 }
             }
         }
@@ -136,7 +157,7 @@ final class ItemAssetResolver {
     private static JsonObject read(Path path) {
         if (path == null) return null;
         try {
-            JsonElement parsed = JsonParser.parseString(Files.readString(path));
+            JsonElement parsed = JsonParser.parseString(IOUtil.readString(path, java.nio.charset.StandardCharsets.UTF_8, MAX_JSON_BYTES));
             return parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
         } catch (Exception ignored) {
             return null;
@@ -157,7 +178,8 @@ final class ItemAssetResolver {
         return value.indexOf(':') >= 0 ? Key.key(value) : Key.key(namespace, value);
     }
 
-    record ResolvedItemAsset(List<Key> textureLayers, String reasonCode) {
+    record ResolvedItemAsset(List<Key> textureLayers, String reasonCode, List<Key> candidateTextures,
+                             List<String> dynamicModelKinds) {
     }
 
     private static final class State {
@@ -165,6 +187,8 @@ final class ItemAssetResolver {
         private final String namespace;
         private final Map<String, String> textures = new LinkedHashMap<>();
         private final Set<String> models = new HashSet<>();
+        private final Set<String> candidateTextures = new java.util.LinkedHashSet<>();
+        private final Set<String> dynamicModelKinds = new java.util.LinkedHashSet<>();
         private boolean specialRenderer;
         private boolean customTint;
         private boolean unresolvedParent;

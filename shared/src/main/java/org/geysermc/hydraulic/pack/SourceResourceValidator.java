@@ -1,6 +1,7 @@
 package org.geysermc.hydraulic.pack;
 
 import com.google.gson.JsonParser;
+import org.geysermc.hydraulic.util.IOUtil;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import java.util.stream.Stream;
 
 /** Finds malformed source resources before conversion while leaving other assets runnable. */
 final class SourceResourceValidator {
+    private static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
     private static final Pattern LOCATION = Pattern.compile("line (\\d+) column (\\d+)");
 
     private SourceResourceValidator() {
@@ -22,7 +24,8 @@ final class SourceResourceValidator {
         if (!Files.isDirectory(root)) return List.of();
         List<Finding> findings = new ArrayList<>();
         try (Stream<Path> files = Files.walk(root)) {
-            files.filter(Files::isRegularFile)
+            files.filter(file -> !Files.isSymbolicLink(file))
+                    .filter(file -> Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS))
                     .filter(file -> file.getFileName().toString().endsWith(".json"))
                     .forEach(file -> validate(root, file, findings));
         } catch (Exception ignored) {
@@ -36,7 +39,7 @@ final class SourceResourceValidator {
         String resource = root.relativize(file).toString().replace('\\', '/');
         if (!resource.startsWith("assets/") && !resource.startsWith("data/")) return;
         try {
-            JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8));
+            JsonParser.parseString(IOUtil.readString(file, StandardCharsets.UTF_8, MAX_JSON_BYTES));
         } catch (Exception exception) {
             String namespace = namespace(resource);
             int[] location = location(exception.getMessage());

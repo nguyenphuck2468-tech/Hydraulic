@@ -25,6 +25,7 @@ import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.hydraulic.component.ComponentConverter;
 import org.geysermc.hydraulic.util.HydraulicKey;
+import org.geysermc.hydraulic.util.IOUtil;
 import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
@@ -60,6 +61,12 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     }
 
     private void handleModel(@NotNull PackPreProcessContext<ItemPackModule> context, ItemModel itemModel, Identifier itemLocation) {
+        handleModel(context, itemModel, itemLocation, Collections.newSetFromMap(new IdentityHashMap<>()));
+    }
+
+    private void handleModel(@NotNull PackPreProcessContext<ItemPackModule> context, ItemModel itemModel,
+                             Identifier itemLocation, Set<ItemModel> visited) {
+        if (itemModel == null || !visited.add(itemModel)) return;
         if (itemModel instanceof ReferenceItemModel referenceModel) {
             Key modelKey = referenceModel.model();
 
@@ -81,17 +88,23 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 itemsWith2dIcon.add(itemLocation); // item/handheld has the parent item/generated, so lets assume it's 2D
                 handheldItems.add(itemLocation);
             }
-        } else if (itemModel instanceof SelectItemModel selectModel) { // See if we can actually do select models here
-            handleModel(context, selectModel.fallback(), itemLocation);
+        } else if (itemModel instanceof SelectItemModel selectModel) {
+            for (SelectItemModel.Case itemCase : selectModel.cases()) {
+                handleModel(context, itemCase.model(), itemLocation, visited);
+            }
+            handleModel(context, selectModel.fallback(), itemLocation, visited);
         } else if (itemModel instanceof CompositeItemModel compositeModel) {
             // A composite can contain a 2D icon and a separate handheld model.
             // Inspect every child so either capability is preserved instead of
             // silently classifying the item from whichever child happens first.
             for (ItemModel child : compositeModel.models()) {
-                handleModel(context, child, itemLocation);
+                handleModel(context, child, itemLocation, visited);
             }
         } else if (itemModel instanceof RangeDispatchItemModel rangeDispatchModel) {
-            handleModel(context, rangeDispatchModel.fallback(), itemLocation);
+            for (RangeDispatchItemModel.Entry entry : rangeDispatchModel.entries()) {
+                handleModel(context, entry.model(), itemLocation, visited);
+            }
+            handleModel(context, rangeDispatchModel.fallback(), itemLocation, visited);
         }
     }
 
@@ -163,6 +176,12 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             Identifier itemModelLocation = itemModelLocation(item, itemLocation);
             Identifier blockLocation = item instanceof BlockItem blockItem ? BuiltInRegistries.BLOCK.getKey(blockItem.getBlock()) : null;
             ItemAssetResolver.ResolvedItemAsset resolvedAsset = ItemAssetResolver.resolve(context.mod(), itemLocation, itemModelLocation, blockLocation);
+            if (!resolvedAsset.dynamicModelKinds().isEmpty()) {
+                context.report().outcome("item-dynamic-model", itemLocation.toString());
+                context.report().resolution("item-dynamic-model", itemLocation.toString(),
+                        resolvedAsset.dynamicModelKinds() + " candidates=" + resolvedAsset.candidateTextures());
+                preserveDynamicTextures(context, bedrockPack, itemLocation, resolvedAsset.candidateTextures());
+            }
 
             Model baseModel = assets.model(Key.key(itemModelLocation.getNamespace(), "item/" + itemModelLocation.getPath()));
             if (baseModel == null && !itemModelLocation.equals(itemLocation)) {
@@ -262,6 +281,17 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         context.report().resolution("item-source-texture-recovery", item.toString(), texture.source());
     }
 
+    /** Keeps every dynamic branch texture addressable even when Geyser cannot express the Java property yet. */
+    private static void preserveDynamicTextures(PackPostProcessContext<?> context, BedrockResourcePack pack,
+                                                Identifier item, List<Key> candidates) {
+        int index = 0;
+        for (Key candidate : candidates) {
+            ItemTexture texture = writeItemTexture(context, pack, candidate);
+            if (texture == null) continue;
+            pack.addItemTexture(item + "_dynamic_" + index++, texture.path());
+        }
+    }
+
     private static List<TextureFallback> findFallbackTextures(PackPostProcessContext<?> context, ResourcePack assets, Identifier itemLocation,
                                                                Identifier itemModel, ItemAssetResolver.ResolvedItemAsset resolvedAsset) {
         Map<Key, TextureFallback> candidates = new LinkedHashMap<>();
@@ -308,7 +338,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         var file = context.mod().resolveFile("assets/" + item.getNamespace() + "/items/" + item.getPath() + ".json");
         if (file == null) return null;
         try {
-            Matcher matcher = RAW_TEXTURE.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            Matcher matcher = RAW_TEXTURE.matcher(IOUtil.readString(file, StandardCharsets.UTF_8, 8 * 1024 * 1024));
             while (matcher.find()) {
                 String value = matcher.group();
                 Key key = value.indexOf(':') >= 0 ? Key.key(value) : Key.key(item.getNamespace(), value);

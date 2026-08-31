@@ -13,6 +13,7 @@ import org.geysermc.geyser.api.pack.PackCodec;
 import org.geysermc.geyser.api.pack.ResourcePack;
 import org.geysermc.geyser.api.pack.option.PriorityOption;
 import org.geysermc.hydraulic.Constants;
+import org.geysermc.hydraulic.util.IOUtil;
 import org.geysermc.hydraulic.HydraulicImpl;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.hydraulic.storage.ModStorage;
@@ -347,7 +348,7 @@ public class PackListener {
     private static boolean isCachedMetadataOnly(Path packPath, String fingerprint) {
         Path markerPath = metadataOnlyMarkerPath(packPath);
         try {
-            JsonObject marker = JsonParser.parseString(Files.readString(markerPath, StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject marker = JsonParser.parseString(IOUtil.readString(markerPath, StandardCharsets.UTF_8, 64 * 1024)).getAsJsonObject();
             return marker.has("revision")
                     && PackManager.PACK_GENERATION_REVISION.equals(marker.get("revision").getAsString())
                     && marker.has("fingerprint") && fingerprint.equals(marker.get("fingerprint").getAsString())

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+import org.geysermc.hydraulic.util.IOUtil;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +27,7 @@ import java.util.stream.Stream;
 /** Shortens Bedrock-unsafe output paths while updating exact JSON path references. */
 final class PackPathRewriter {
     private static final int BEDROCK_PATH_LIMIT = 80;
+    private static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
 
     private PackPathRewriter() {
     }
@@ -56,7 +58,8 @@ final class PackPathRewriter {
     private static MovePlan moves(Path root) throws IOException {
         List<Path> files;
         try (Stream<Path> stream = Files.walk(root)) {
-            files = stream.filter(Files::isRegularFile).sorted().toList();
+            files = stream.filter(path -> !Files.isSymbolicLink(path))
+                    .filter(path -> Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)).sorted().toList();
         }
         Map<Path, Path> moves = new LinkedHashMap<>();
         Set<Path> targets = new HashSet<>();
@@ -97,12 +100,19 @@ final class PackPathRewriter {
     private static JsonPlan jsonRewrites(Path root, Map<Path, Path> moves, Map<String, String> replacements) throws IOException {
         List<Path> files;
         try (Stream<Path> stream = Files.walk(root)) {
-            files = stream.filter(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".json")).sorted().toList();
+            files = stream.filter(path -> !Files.isSymbolicLink(path))
+                    .filter(path -> Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                            && path.getFileName().toString().endsWith(".json")).sorted().toList();
         }
         List<JsonRewrite> rewrites = new ArrayList<>();
         Set<String> references = new HashSet<>();
         for (Path source : files) {
-            byte[] original = Files.readAllBytes(source);
+            byte[] original;
+            try {
+                original = IOUtil.readBytes(source, MAX_JSON_BYTES);
+            } catch (IOException oversized) {
+                continue;
+            }
             JsonElement json;
             try {
                 json = JsonParser.parseString(new String(original, StandardCharsets.UTF_8));
