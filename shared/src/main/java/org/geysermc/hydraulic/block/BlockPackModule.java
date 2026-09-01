@@ -69,7 +69,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 
-@AutoService(PackModule.class)
+@AutoService(value = PackModule.class)
+@SuppressWarnings("rawtypes")
 public class BlockPackModule extends PackModule<BlockPackModule> {
     private static final String STATE_CONDITION = "query.block_property('%s') == %s";
 

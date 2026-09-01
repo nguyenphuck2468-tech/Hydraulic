@@ -48,7 +48,8 @@ import java.util.stream.Stream;
  * use. Part models ({@code <path>_head.geo.json}) bind as geometry
  * variants.</p>
  */
-@AutoService(PackModule.class)
+@AutoService(value = PackModule.class)
+@SuppressWarnings("rawtypes")
 public class EntityPackModule extends PackModule<EntityPackModule> {
     public EntityPackModule() {
         this.postProcess(this::postProcess);

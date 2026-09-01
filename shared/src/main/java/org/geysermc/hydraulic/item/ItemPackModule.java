@@ -34,7 +34,8 @@ import team.unnamed.creative.model.ModelTexture;
 
 import java.util.*;
 
-@AutoService(PackModule.class)
+@AutoService(value = PackModule.class)
+@SuppressWarnings("rawtypes")
 public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     private final List<Identifier> itemsWith2dIcon = new ArrayList<>();
     private final List<Identifier> handheldItems = new ArrayList<>();

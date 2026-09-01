@@ -12,7 +12,8 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
-@AutoService(PackModule.class)
+@AutoService(value = PackModule.class)
+@SuppressWarnings("rawtypes")
 public class HydraulicPackModule extends PackModule<HydraulicPackModule> {
     public HydraulicPackModule() {
         this.postProcess(context -> {

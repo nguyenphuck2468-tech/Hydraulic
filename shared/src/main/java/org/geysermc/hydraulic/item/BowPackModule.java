@@ -26,7 +26,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@AutoService(PackModule.class)
+@AutoService(value = PackModule.class)
+@SuppressWarnings("rawtypes")
 public class BowPackModule extends TexturePackModule<BowPackModule> {
     private static final Map<String, String> ATTACHABLE_MATERIALS = new HashMap<>() {
         {
