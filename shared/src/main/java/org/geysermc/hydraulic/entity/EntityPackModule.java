@@ -52,8 +52,8 @@ import java.util.stream.Stream;
  * exactly after the entity, converted geometries are matched by their inner
  * identifier ({@code geometry.alexsmobs.grizzly_bear}) and textures are
  * searched by file name, which covers the naming style most GeckoLib mods
- * use. Part models ({@code <path>_head.geo.json}) bind as geometry
- * variants.</p>
+ * use. Part models remain in the archive but are not advertised as variants
+ * unless a render controller can actually select them.</p>
  */
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
@@ -272,12 +272,12 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
     /**
      * Resolves which of the entity's converted animations drive idle and walk.
-     * Names are matched by their conventional suffixes; a lone animation of
-     * unrecognized name is treated as a constant idle so simple mobs still move.
+     * Names are matched by conventional suffixes or explicit operator mapping.
+     * Unknown names remain available but are not guessed into controller states.
      *
      * @return the resolved pair, or {@code null} when nothing can be bound
      */
-    private AnimationRefs resolveAnimationRefs(String entityId, JsonObject animations) {
+    AnimationRefs resolveAnimationRefs(String entityId, JsonObject animations) {
         if (animations.size() == 0) {
             return null;
         }
@@ -292,8 +292,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
         String idle = null;
         String walk = null;
-        List<String> names = new ArrayList<>(animations.keySet());
-        for (String name : names) {
+        for (String name : animations.keySet()) {
             String lower = name.toLowerCase(Locale.ROOT);
             if (idle == null && (lower.endsWith(".idle") || lower.endsWith(".base") || lower.endsWith(".ambient"))) {
                 idle = name;
@@ -302,9 +301,11 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             }
         }
 
-        if (idle == null && walk == null) {
-            return new AnimationRefs(names.getFirst(), null);
-        }
+        // Unknown animation names stay available as explicit client-entity
+        // bindings, but must not be guessed into a controller state. Playing
+        // an attack/death/special animation forever is worse than leaving it
+        // dormant until an explicit entity-animations.json mapping exists.
+        if (idle == null && walk == null) return null;
         return new AnimationRefs(idle, walk);
     }
 
@@ -931,10 +932,7 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 List<String> matchingNames = declared.keySet().stream()
                         .filter(name -> animationNameMatchesEntity(name, path))
                         .toList();
-                // A namespace with exactly one animation document is common in
-                // small mods; it is unambiguous even when the file is named
-                // animations.json instead of after the entity.
-                if (!exact && !fileNamedForEntity && matchingNames.isEmpty() && candidates.size() != 1) continue;
+                if (!exact && !fileNamedForEntity && matchingNames.isEmpty()) continue;
 
                 Iterable<String> names = exact || fileNamedForEntity || matchingNames.isEmpty()
                         ? declared.keySet() : matchingNames;

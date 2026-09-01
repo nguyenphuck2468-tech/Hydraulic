@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityPackModuleTest {
@@ -49,6 +50,23 @@ class EntityPackModuleTest {
 
         assertTrue(found.has("animation.example.beast.walk"));
         assertEquals(1, found.size());
+    }
+
+    @Test
+    void doesNotBorrowTheOnlyUnrelatedAnimationDocumentInNamespace() {
+        BedrockResourcePack pack = new BedrockResourcePack(temporaryDirectory);
+        pack.addExtraFile(animationDocument("animation.example.other.attack"),
+                "animations/example.animations.animation.json");
+
+        assertEquals(0, EntityPackModule.collectAnimations("example", "beast", pack).size());
+    }
+
+    @Test
+    void doesNotGuessUnknownAnimationAsIdle() {
+        JsonObject animations = new JsonObject();
+        animations.addProperty("animation.example.beast.attack", "animation.example.beast.attack");
+
+        assertNull(new EntityPackModule().resolveAnimationRefs("example:beast", animations));
     }
 
     @Test

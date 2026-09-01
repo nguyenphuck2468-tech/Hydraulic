@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -112,6 +114,25 @@ class PackListenerTest {
         Files.writeString(PackListener.metadataOnlyMarkerPath(packPath), " ".repeat(64 * 1024 + 1));
 
         assertEquals(PackListener.CacheStatus.CONVERT, PackListener.cacheStatus(packPath, "fingerprint"));
+    }
+
+    @Test
+    void writesAtomicMachineReadableDeliveryPlan() throws IOException {
+        Path first = temporaryDirectory.resolve("first.mcpack");
+        Path second = temporaryDirectory.resolve("second.mcpack");
+        Files.write(first, new byte[7]);
+        Files.write(second, new byte[11]);
+        Path plan = temporaryDirectory.resolve("reports/delivery-plan.json");
+
+        PackListener.writeDeliveryPlan(plan, PackProfile.LITE, List.of(first, second));
+
+        JsonObject json = JsonParser.parseString(Files.readString(plan)).getAsJsonObject();
+        assertEquals(1, json.get("schema_version").getAsInt());
+        assertEquals("lite", json.get("profile").getAsString());
+        assertEquals(2, json.get("pack_count").getAsInt());
+        assertEquals(18, json.get("total_bytes").getAsLong());
+        assertEquals("first.mcpack", json.getAsJsonArray("packs").get(0).getAsJsonObject().get("file").getAsString());
+        assertFalse(Files.exists(plan.resolveSibling("delivery-plan.json.part")));
     }
 
     private Path archive(String fileName, String fingerprint, boolean includeAsset) throws IOException {

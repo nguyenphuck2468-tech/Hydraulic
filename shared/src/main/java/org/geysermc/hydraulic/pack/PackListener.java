@@ -2,6 +2,7 @@ package org.geysermc.hydraulic.pack;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
@@ -377,7 +378,7 @@ public class PackListener {
                 quality.unresolvedItemAssets());
     }
 
-    private static void logDeliveryPlan(List<Path> packs) {
+    private void logDeliveryPlan(List<Path> packs) {
         long bytes = 0;
         for (Path pack : packs) {
             try {
@@ -387,6 +388,33 @@ public class PackListener {
         }
         LOGGER.info("Bedrock delivery plan: {} pack(s), {} bytes; client download/import/apply timing requires a real Bedrock session",
                 packs.size(), bytes);
+        Path plan = hydraulic.dataFolder(Constants.MOD_ID).resolve("reports/delivery-plan.json");
+        try {
+            writeDeliveryPlan(plan, manager.profile(), packs);
+        } catch (IOException exception) {
+            LOGGER.warn("Could not write Bedrock delivery plan {}", plan, exception);
+        }
+    }
+
+    static void writeDeliveryPlan(Path target, PackProfile profile, List<Path> packs) throws IOException {
+        JsonObject root = new JsonObject();
+        root.addProperty("schema_version", 1);
+        root.addProperty("profile", profile.id());
+        root.addProperty("pack_count", packs.size());
+        long totalBytes = 0;
+        JsonArray entries = new JsonArray();
+        for (Path pack : packs) {
+            long bytes = Files.size(pack);
+            totalBytes += bytes;
+            JsonObject entry = new JsonObject();
+            entry.addProperty("file", pack.getFileName().toString());
+            entry.addProperty("bytes", bytes);
+            entries.add(entry);
+        }
+        root.addProperty("total_bytes", totalBytes);
+        root.add("packs", entries);
+        Files.createDirectories(target.getParent());
+        PackManager.writeStringAtomically(target, GSON.toJson(root));
     }
 
     private record PackRequest(ModInfo mod, Path packPath, String fingerprint) {
