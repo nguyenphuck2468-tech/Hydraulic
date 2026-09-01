@@ -150,11 +150,7 @@ public class PackManager {
                 }
 
                 if (module.hasPreProcessors()) {
-                    try {
-                        module.preProcess0(new PackPreProcessContext(this.hydraulic, mod, module, modPacks.get(mod.id()), modelProvider));
-                    } catch (Throwable t) {
-                        LOGGER.error("Failed to pre-process mod {} for module {}", mod.id(), module.getClass().getSimpleName(), t);
-                    }
+                    preProcessForMod(module, mod, modPacks.get(mod.id()));
                 }
             }
         }
@@ -231,6 +227,26 @@ public class PackManager {
     private void callEvent(@NotNull ModInfo mod, @NotNull Event event) {
         for (PackModule<?> module : this.modules) {
             module.call(event.getClass(), new PackEventContext(this.hydraulic, mod, module, event));
+        }
+    }
+
+    /**
+     * Runs {@code module}' pre-processors for {@code mod}. Extracted from
+     * {@link #initialize()} so the raw/unchecked cascade from
+     * {@code PackModule<?>} wildcards stays local to this method (matches
+     * the existing {@link #callEvent} suppression pattern) rather than
+     * polluting every loop iteration in {@code initialize()}.
+     */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void preProcessForMod(
+        PackModule module,
+        ModInfo mod,
+        Collection<ResourcePack> modPacks
+    ) {
+        try {
+            module.preProcess0(new PackPreProcessContext<>(this.hydraulic, mod, module, modPacks, modelProvider));
+        } catch (Throwable t) {
+            LOGGER.error("Failed to pre-process mod {} for module {}", mod.id(), module.getClass().getSimpleName(), t);
         }
     }
 
