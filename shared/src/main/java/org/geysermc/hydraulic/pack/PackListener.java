@@ -21,7 +21,6 @@ import org.geysermc.hydraulic.storage.ModStorage;
 import org.geysermc.hydraulic.util.FormatUtil;
 import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.bedrock.resource.Manifest;
-import org.geysermc.pack.converter.util.VanillaPackProvider;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -67,42 +66,6 @@ public class PackListener {
             }
         });
 
-        warmVanillaPack();
-    }
-
-    /**
-     * Starts fetching the vanilla pack cache as early as possible. The first
-     * download of a new Minecraft version can take minutes on slow networks,
-     * and the pack conversion joins on the server thread - if the download
-     * only starts there, the server watchdog kills the server before the
-     * cache is ready. Warming from mod init (before the server thread and
-     * its watchdog exist) means the conversion usually finds a finished
-     * cache; VanillaPackProvider serialises concurrent callers.
-     */
-    private void warmVanillaPack() {
-        String version;
-        try {
-            SharedConstants.tryDetectVersion();
-            version = SharedConstants.getCurrentVersion().id();
-        } catch (Throwable t) {
-            LOGGER.debug("Could not determine Minecraft version early, deferring vanilla pack fetch", t);
-            return;
-        }
-
-        // The conversion-time path resolves its version from this property and,
-        // when unset, must fetch Mojang's manifest before it can even compare
-        // the cache - a network call made while the server thread joins the
-        // conversion. Publishing the detected version lets that path hit the
-        // warmed cache without touching the network.
-        System.setProperty("packconverter.vanillaVersion", version);
-
-        LOGGER.info("Pre-fetching vanilla pack for Minecraft {}...", version);
-        CompletableFuture.runAsync(() ->
-                VanillaPackProvider.create(this.manager.getVanillaPath(), version, new PackLogListener(LOGGER)), executor())
-                .exceptionally(exception -> {
-                    LOGGER.warn("Could not pre-fetch the vanilla pack", exception);
-                    return null;
-                });
     }
 
     @Subscribe(postOrder = PostOrder.LATE)
@@ -159,8 +122,8 @@ public class PackListener {
                     return new PackResult(request.mod().id(), request.packPath(),
                             this.manager.createPack(request.mod(), request.packPath(), request.fingerprint()),
                             TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - conversionStarted));
-                } catch (Throwable t) {
-                    LOGGER.error("Failed to convert pack for mod {}", request.mod().id(), t);
+                } catch (Exception | LinkageError exception) {
+                    LOGGER.error("Failed to convert pack for mod {}", request.mod().id(), exception);
                     return new PackResult(request.mod().id(), request.packPath(), PackManager.PackCreationResult.FAILED, 0);
                 }
             }, executor));
@@ -224,7 +187,7 @@ public class PackListener {
 
             Path packPath = storage.pack();
             String fingerprint = PackUtil.getPackUUID(sourceFingerprints.get(mod.id()), contextFingerprint,
-                    SharedConstants.getCurrentVersion().id(), PackManager.PACK_GENERATION_REVISION + ":" + manager.profile().id()).toString();
+                    SharedConstants.getCurrentVersion().id(), manager.identityRevision()).toString();
             PackRequest request = new PackRequest(mod, packPath, fingerprint);
             CacheStatus status = this.hydraulic.isDev() ? CacheStatus.CONVERT : cacheStatus(packPath, fingerprint);
             switch (status) {
@@ -330,8 +293,23 @@ public class PackListener {
 
     /** Selects the one startup action allowed for a mod fingerprint. */
     static CacheStatus cacheStatus(Path packPath, String fingerprint) {
-        if (isCachedMetadataOnly(packPath, fingerprint)) return CacheStatus.SKIPPED_EMPTY;
-        return needsConversion(packPath, fingerprint) ? CacheStatus.CONVERT : CacheStatus.REUSE;
+        if (!needsConversion(packPath, fingerprint)) {
+            try {
+                deleteMetadataOnlyMarker(packPath);
+            } catch (IOException exception) {
+                LOGGER.warn("Could not remove stale metadata-only marker for {}", packPath, exception);
+            }
+            return CacheStatus.REUSE;
+        }
+        if (isCachedMetadataOnly(packPath, fingerprint)) {
+            try {
+                Files.deleteIfExists(packPath);
+            } catch (IOException exception) {
+                LOGGER.warn("Could not remove invalid archive superseded by metadata marker {}", packPath, exception);
+            }
+            return CacheStatus.SKIPPED_EMPTY;
+        }
+        return CacheStatus.CONVERT;
     }
 
     static Path metadataOnlyMarkerPath(Path packPath) {

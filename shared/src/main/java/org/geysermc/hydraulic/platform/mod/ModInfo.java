@@ -5,6 +5,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URI;
 import java.util.Collection;
 
 public record ModInfo(
@@ -35,7 +36,10 @@ public record ModInfo(
             if (Files.isRegularFile(root)) return root;
             if ("jar".equals(root.getFileSystem().provider().getScheme())) {
                 try {
-                    Path jar = Path.of(root.getFileSystem().toString());
+                    String uri = root.toUri().toString();
+                    int separator = uri.indexOf("!/");
+                    if (!uri.startsWith("jar:") || separator < 0) continue;
+                    Path jar = Path.of(URI.create(uri.substring("jar:".length(), separator)));
                     if (Files.isRegularFile(jar)) return jar;
                 } catch (RuntimeException ignored) {
                     // Development directories have no source jar to reflect.

@@ -104,7 +104,7 @@ class PackArchiveValidatorTest {
 
         PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
 
-        assertTrue(result.valid());
+        assertFalse(result.valid());
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity texture")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity geometry")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity animation")));
@@ -124,7 +124,7 @@ class PackArchiveValidatorTest {
 
         PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
 
-        assertTrue(result.valid());
+        assertFalse(result.valid());
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing atlas texture")));
         assertTrue(result.findings().stream().anyMatch(finding -> finding.code().equals("broken-texture-link")
                 && finding.severity() == PackArchiveValidator.Severity.ERROR));
@@ -143,6 +143,21 @@ class PackArchiveValidatorTest {
 
         assertTrue(result.findings().stream().anyMatch(finding -> finding.severity() == PackArchiveValidator.Severity.INFO
                 && finding.message().contains("textures/atlas/blocks")));
+    }
+
+    @Test
+    void reportsGeometryWithMostCubes() throws IOException {
+        Path archive = temporaryDirectory.resolve("geometry.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "models/entity/example.json", "{\"minecraft:geometry\":[{\"bones\":[{\"cubes\":[{},{}]}]}]}");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertTrue(result.largestGeometry().endsWith("example.json"));
+        assertTrue(result.largestGeometryCubes() == 2);
     }
 
     @Test

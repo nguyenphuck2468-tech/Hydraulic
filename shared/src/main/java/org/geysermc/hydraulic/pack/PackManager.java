@@ -52,9 +52,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
 /**
@@ -64,6 +69,7 @@ import java.util.stream.Stream;
  */
 public class PackManager {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final long PREPARATION_STARTUP_WAIT_SECONDS = 30;
 
     /**
      * Increment when the generated Bedrock-pack contract changes. This keeps
@@ -71,7 +77,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "24";
+    public static final String PACK_GENERATION_REVISION = "25";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -93,6 +99,7 @@ public class PackManager {
     private final HydraulicImpl hydraulic;
     private final Path vanillaPath;
     private final PackProfile profile;
+    private final String packConverterRevision;
     private final List<PackModule<?>> modules = new ArrayList<>();
 
     private final ListMultimap<String, ModInfo> namespacesToMods = MultimapBuilder.hashKeys().arrayListValues(1).build();
@@ -103,20 +110,82 @@ public class PackManager {
     private List<ConverterPipeline<?, ?>> packConverters;
     private ModelStitcher.Provider modelProvider;
     private Path clientRuntime;
+    private Map<String, List<ResourcePack>> preparedModPacks = Map.of();
+    private CompletableFuture<Void> preparation;
 
     public PackManager(HydraulicImpl hydraulic) {
         this.hydraulic = hydraulic;
         this.vanillaPath = hydraulic.dataFolder(Constants.MOD_ID).resolve("cache/vanilla-assets.zip");
         this.profile = PackProfile.load(hydraulic.dataFolder(Constants.MOD_ID), LOGGER);
+        this.packConverterRevision = org.geysermc.hydraulic.util.PackUtil.getCodeSourceFingerprint(PackConverter.class);
         LOGGER.info("Hydraulic pack profile: {}", this.profile.id());
+    }
+
+    /** Starts heavyweight preparation once the manager itself is fully constructed. */
+    public synchronized void startPreparation() {
+        if (preparation != null) return;
+        preparation = CompletableFuture.runAsync(this::prepareInputs, runnable -> {
+            Thread thread = new Thread(runnable, Constants.MOD_NAME + " Pack Preparation");
+            thread.setDaemon(true);
+            thread.start();
+        });
     }
 
     /**
      * Initializes the pack manager.
      */
     public void initialize() {
-        initializeModLookups();
+        startPreparation();
+        try {
+            preparation.get(PREPARATION_STARTUP_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException exception) {
+            LOGGER.error("Hydraulic pack preparation was not ready after {} seconds; server will continue without converted packs",
+                    PREPARATION_STARTUP_WAIT_SECONDS);
+            return;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            LOGGER.error("Interrupted while waiting for Hydraulic pack preparation");
+            return;
+        } catch (ExecutionException exception) {
+            LOGGER.error("Hydraulic pack preparation failed; server will continue without converted packs", exception.getCause());
+            return;
+        }
 
+        // Loader registries are not complete when early background preparation starts,
+        // especially on NeoForge. Ownership lookup must run after registration.
+        initializeModLookups();
+        final Collection<ModInfo> mods = this.hydraulic.mods();
+        final Map<String, List<ResourcePack>> modPacks = this.preparedModPacks;
+
+        for (PackModule<?> module : ServiceLoader.load(PackModule.class)) {
+            this.modules.add(module);
+
+            GeyserApi.api().eventBus().register(this.hydraulic, module);
+            module.eventListeners().forEach((eventClass, listeners) -> {
+                GeyserApi.api().eventBus().subscribe(this.hydraulic, eventClass, this::callEvents);
+            });
+
+            for (ModInfo mod : mods) {
+                if (IGNORED_MODS.contains(mod.id())) {
+                    continue;
+                }
+
+                if (module.hasPreProcessors()) {
+                    try {
+                        module.preProcess0(new PackPreProcessContext(this.hydraulic, mod, module, modPacks.get(mod.id()), modelProvider));
+                    } catch (Exception | LinkageError exception) {
+                        LOGGER.error("Failed to pre-process mod {} for module {}", mod.id(), module.getClass().getSimpleName(), exception);
+                    }
+                }
+            }
+        }
+        this.preparedModPacks = Map.of();
+        GeyserApi.api().eventBus().register(this.hydraulic, new PackListener(this.hydraulic, this));
+    }
+
+    /** Network, archive reading and resource indexing begin at mod load, before server startup. */
+    private void prepareInputs() {
+        SharedConstants.tryDetectVersion();
         final Collection<ModInfo> mods = this.hydraulic.mods();
         final Map<String, List<ResourcePack>> modPacks = Maps.newHashMapWithExpectedSize(mods.size());
         for (final ModInfo mod : mods) {
@@ -170,31 +239,7 @@ public class PackManager {
                 AssetConverters.MODEL,
                 AssetConverters.MODEL
         ));
-
-        for (PackModule<?> module : ServiceLoader.load(PackModule.class)) {
-            this.modules.add(module);
-
-            GeyserApi.api().eventBus().register(this.hydraulic, module);
-            module.eventListeners().forEach((eventClass, listeners) -> {
-                GeyserApi.api().eventBus().subscribe(this.hydraulic, eventClass, this::callEvents);
-            });
-
-            for (ModInfo mod : mods) {
-                if (IGNORED_MODS.contains(mod.id())) {
-                    continue;
-                }
-
-                if (module.hasPreProcessors()) {
-                    try {
-                        module.preProcess0(new PackPreProcessContext(this.hydraulic, mod, module, modPacks.get(mod.id()), modelProvider));
-                    } catch (Throwable t) {
-                        LOGGER.error("Failed to pre-process mod {} for module {}", mod.id(), module.getClass().getSimpleName(), t);
-                    }
-                }
-            }
-        }
-
-        GeyserApi.api().eventBus().register(this.hydraulic, new PackListener(this.hydraulic, this));
+        this.preparedModPacks = Map.copyOf(modPacks);
     }
 
     /**
@@ -239,6 +284,7 @@ public class PackManager {
             long postProcessStartedAt = System.nanoTime();
             JsonObject generationMarker = new JsonObject();
             generationMarker.addProperty("revision", PACK_GENERATION_REVISION);
+            generationMarker.addProperty("pack_converter_revision", packConverterRevision);
             generationMarker.addProperty("fingerprint", fingerprint);
             generationMarker.addProperty("profile", profile.id());
             generationMarker.addProperty("blocks", blockCount);
@@ -259,6 +305,10 @@ public class PackManager {
                 report.resolution("pack-profile", "selected", profile.id());
                 report.resolution("texture-pixels", "before", Long.toString(optimized.originalPixels()));
                 report.resolution("texture-pixels", "after", Long.toString(optimized.outputPixels()));
+                if (optimized.largestTexture() != null) {
+                    report.resolution("texture-largest", optimized.largestTexture(),
+                            optimized.largestWidth() + "x" + optimized.largestHeight());
+                }
                 report.outcome("texture-resized", optimized.resized());
             } finally {
                 report.timing("post_process", (System.nanoTime() - postProcessStartedAt) / 1_000_000);
@@ -329,6 +379,10 @@ public class PackManager {
                 long packageMillis = (packagedAt - convertedAt) / 1_000_000;
                 long validationMillis = (validatedAt - packagedAt) / 1_000_000;
                 long archiveBytes = Files.size(stagedPack);
+                if (validation.largestGeometry() != null) {
+                    report.resolution("geometry-most-cubes", validation.largestGeometry(),
+                            Integer.toString(validation.largestGeometryCubes()));
+                }
                 report.timing("input", assetsMillis);
                 report.timing("package", packageMillis);
                 report.timing("validation", validationMillis);
@@ -580,23 +634,16 @@ public class PackManager {
         Map<String, List<ResourcePack>> modPacks,
         Path vanillaPath
     ) {
-        final List<ResourcePack> flattenedPacks = mods.stream()
-            .map(ModInfo::id)
-            .map(modPacks::get)
-            .flatMap(List::stream)
-            .toList();
-
-        ResourcePack vanillaResourcePack = MinecraftResourcePackReader.minecraft().readFromZipFile(vanillaPath);
-
-        return key -> {
-            for (final ResourcePack pack : flattenedPacks) {
-                final Model model = pack.model(key);
-                if (model != null) {
-                    return model;
-                }
+        Map<net.kyori.adventure.key.Key, Model> models = new LinkedHashMap<>();
+        for (ModInfo mod : mods) {
+            for (ResourcePack pack : modPacks.get(mod.id())) {
+                for (Model model : pack.models()) models.putIfAbsent(model.key(), model);
             }
-            return vanillaResourcePack.model(key);
-        };
+        }
+        ResourcePack vanillaResourcePack = MinecraftResourcePackReader.minecraft().readFromZipFile(vanillaPath);
+        for (Model model : vanillaResourcePack.models()) models.putIfAbsent(model.key(), model);
+        Map<net.kyori.adventure.key.Key, Model> index = Map.copyOf(models);
+        return index::get;
     }
 
     public ListMultimap<String, ModInfo> getNamespacesToMods() {
@@ -627,5 +674,9 @@ public class PackManager {
 
     PackProfile profile() {
         return profile;
+    }
+
+    String identityRevision() {
+        return "hydraulic=" + PACK_GENERATION_REVISION + ";packconverter=" + packConverterRevision + ";profile=" + profile.id();
     }
 }

@@ -37,6 +37,8 @@ public final class PackArchiveValidator {
         int files = 0;
         int assetFiles = 0;
         long totalJsonBytes = 0;
+        String largestGeometry = null;
+        int largestGeometryCubes = 0;
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             if (zip.getEntry("manifest.json") == null) errors.add("missing manifest.json");
             if (zip.getEntry(PackManager.PACK_GENERATION_MARKER) == null) errors.add("missing " + PackManager.PACK_GENERATION_MARKER);
@@ -72,6 +74,13 @@ public final class PackArchiveValidator {
                         }
                         JsonElement parsed = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8));
                         if (parsed.isJsonObject()) {
+                            if (entry.getName().startsWith("models/entity/")) {
+                                int cubes = countNamedArrays(parsed, "cubes");
+                                if (cubes > largestGeometryCubes) {
+                                    largestGeometryCubes = cubes;
+                                    largestGeometry = entry.getName();
+                                }
+                            }
                             collectReferences(entry.getName(), parsed.getAsJsonObject(), entityReferences, atlasReferences, geometries, animations, animationControllers);
                         }
                     } catch (RuntimeException exception) {
@@ -109,7 +118,24 @@ public final class PackArchiveValidator {
                 }
             }
         }
-        return new Result(files, assetFiles, List.copyOf(errors), List.copyOf(warnings), classify(errors, warnings));
+        return new Result(files, assetFiles, List.copyOf(errors), List.copyOf(warnings), classify(errors, warnings),
+                largestGeometry, largestGeometryCubes);
+    }
+
+    private static int countNamedArrays(JsonElement element, String name) {
+        if (element == null) return 0;
+        if (element.isJsonArray()) {
+            int count = 0;
+            for (JsonElement child : element.getAsJsonArray()) count += countNamedArrays(child, name);
+            return count;
+        }
+        if (!element.isJsonObject()) return 0;
+        int count = 0;
+        for (var entry : element.getAsJsonObject().entrySet()) {
+            if (entry.getKey().equals(name) && entry.getValue().isJsonArray()) count += entry.getValue().getAsJsonArray().size();
+            count += countNamedArrays(entry.getValue(), name);
+        }
+        return count;
     }
 
     static boolean hasAssets(ZipFile zip) {
@@ -267,9 +293,10 @@ public final class PackArchiveValidator {
     private record AtlasReferences(String file, String key, List<String> textures) {
     }
 
-    public record Result(int files, int assetFiles, List<String> errors, List<String> warnings, List<Finding> findings) {
+    public record Result(int files, int assetFiles, List<String> errors, List<String> warnings, List<Finding> findings,
+                         String largestGeometry, int largestGeometryCubes) {
         public boolean valid() {
-            return errors.isEmpty();
+            return errors.isEmpty() && findings.stream().noneMatch(finding -> finding.severity() == Severity.ERROR);
         }
 
         public boolean metadataOnly() {

@@ -9,6 +9,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PackUtilTest {
     @Test
@@ -38,5 +39,11 @@ class PackUtilTest {
         Files.write(second.resolve(file), new byte[] { 2 });
 
         assertNotEquals(PackUtil.getModUUID(List.of(first, second)), PackUtil.getModUUID(List.of(second, first)));
+    }
+
+    @Test
+    void hashFailureInvalidatesInsteadOfProducingPartialIdentity() {
+        Path missing = temporaryDirectory.resolve("missing-root");
+        assertThrows(java.io.UncheckedIOException.class, () -> PackUtil.getModUUID(List.of(missing)));
     }
 }

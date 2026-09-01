@@ -8,17 +8,21 @@ import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 /**
  * Stores data relevant to a mod.
  */
 public class ModStorage {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final int MATERIALS_FORMAT_VERSION = 1;
 
     private ModInfo mod;
     private Materials materials = new Materials();
@@ -68,11 +72,12 @@ public class ModStorage {
                 Files.createDirectories(path);
             }
 
-            try (BufferedWriter writer = Files.newBufferedWriter(path.resolve("materials.json"))) {
-                Constants.GSON.toJson(this.materials, writer);
-            }
+            JsonObject document = new JsonObject();
+            document.addProperty("version", MATERIALS_FORMAT_VERSION);
+            document.add("materials", Constants.GSON.toJsonTree(this.materials));
+            writeRecoverable(path.resolve("materials.json"), Constants.GSON.toJson(document));
         } catch (IOException e) {
-            LOGGER.error("Failed to save mod storage for {}", this.mod.id());
+            LOGGER.error("Failed to save mod storage for {}", this.mod.id(), e);
         }
     }
 
@@ -90,13 +95,16 @@ public class ModStorage {
             return storage;
         }
 
+        Path materialsPath = path.resolve("materials.json");
         try {
-            try (BufferedReader reader = Files.newBufferedReader(path.resolve("materials.json"))) {
-                Materials materials = Constants.GSON.fromJson(reader, Materials.class);
-                storage.materials(materials);
+            storage.materials(readMaterials(materialsPath));
+        } catch (IOException | RuntimeException primary) {
+            try {
+                storage.materials(readMaterials(backupPath(materialsPath)));
+                LOGGER.warn("Recovered mod storage for {} from backup", mod.id());
+            } catch (IOException | RuntimeException backup) {
+                LOGGER.error("Failed to load mod storage for {}; starting with empty materials", mod.id(), primary);
             }
-        } catch (IOException e) {
-            LOGGER.error("Failed to load mod storage for {}", mod.id());
         }
 
         return storage;
@@ -106,5 +114,39 @@ public class ModStorage {
         return HydraulicImpl.instance().dataFolder(Constants.MOD_ID)
                 .resolve("storage")
                 .resolve(mod.id());
+    }
+
+    static Materials readMaterials(Path path) throws IOException {
+        var parsed = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8));
+        if (!parsed.isJsonObject()) throw new IOException("materials document is not an object");
+        JsonObject object = parsed.getAsJsonObject();
+        if (!object.has("version")) {
+            Materials legacy = Constants.GSON.fromJson(object, Materials.class);
+            if (legacy == null) throw new IOException("legacy materials document is empty");
+            return legacy;
+        }
+        if (object.get("version").getAsInt() != MATERIALS_FORMAT_VERSION || !object.has("materials")) {
+            throw new IOException("unsupported materials format version");
+        }
+        Materials materials = Constants.GSON.fromJson(object.get("materials"), Materials.class);
+        if (materials == null) throw new IOException("materials document is empty");
+        return materials;
+    }
+
+    private static void writeRecoverable(Path target, String contents) throws IOException {
+        Path temporary = target.resolveSibling(target.getFileName() + ".part");
+        Files.writeString(temporary, contents, StandardCharsets.UTF_8);
+        if (Files.isRegularFile(target)) {
+            Files.copy(target, backupPath(target), StandardCopyOption.REPLACE_EXISTING);
+        }
+        try {
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static Path backupPath(Path target) {
+        return target.resolveSibling(target.getFileName() + ".bak");
     }
 }

@@ -19,6 +19,9 @@ import java.util.Comparator;
 import java.util.UUID;
 import java.util.Map;
 import java.util.stream.Stream;
+import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 
 /**
  * Utility class for packs.
@@ -72,24 +75,19 @@ public class PackUtil {
         for (Path root : modRoots) {
             final HashingOutputStream rootOutput = new HashingOutputStream(Hashing.murmur3_128(), OutputStream.nullOutputStream());
             try (Stream<Path> stream = Files.walk(root)) {
-                stream.sorted(Comparator.comparing(path -> root.relativize(path).toString()))
-                        .forEachOrdered(path -> {
-                            try {
-                                rootOutput.write(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
-                                rootOutput.write(0);
-                                if (Files.isRegularFile(path)) {
-                                    rootOutput.write(1);
-                                    Files.copy(path, rootOutput);
-                                } else {
-                                    rootOutput.write(2);
-                                }
-                                rootOutput.write(0);
-                            } catch (IOException exception) {
-                                LOGGER.warn("Failed to hash {}", path, exception);
-                            }
-                        });
+                for (Path path : stream.sorted(Comparator.comparing(path -> root.relativize(path).toString())).toList()) {
+                    rootOutput.write(root.relativize(path).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8));
+                    rootOutput.write(0);
+                    if (Files.isRegularFile(path)) {
+                        rootOutput.write(1);
+                        Files.copy(path, rootOutput);
+                    } else {
+                        rootOutput.write(2);
+                    }
+                    rootOutput.write(0);
+                }
             } catch (IOException exception) {
-                LOGGER.warn("Failed to walk resource root {}", root, exception);
+                throw new UncheckedIOException("Failed to hash resource root " + root, exception);
             }
             try {
                 output.write(rootOutput.hash().asBytes());
@@ -98,6 +96,20 @@ public class PackUtil {
             }
         }
         return UUID.nameUUIDFromBytes(output.hash().asBytes());
+    }
+
+    /** Content identity of the exact implementation supplying a conversion class. */
+    public static String getCodeSourceFingerprint(Class<?> type) {
+        try {
+            if (type.getProtectionDomain() != null && type.getProtectionDomain().getCodeSource() != null) {
+                URI location = type.getProtectionDomain().getCodeSource().getLocation().toURI();
+                return getModUUID(java.util.List.of(Path.of(location))).toString();
+            }
+        } catch (SecurityException | URISyntaxException exception) {
+            throw new IllegalStateException("Could not fingerprint code source for " + type.getName(), exception);
+        }
+        return type.getPackage().getImplementationVersion() == null
+                ? "development" : type.getPackage().getImplementationVersion();
     }
 
     /** Stable identity for the complete installed conversion context. */

@@ -41,6 +41,7 @@ public class HydraulicImpl implements EventRegistrar {
         this.platform = platform;
         this.bootstrap = bootstrap;
         this.packManager = new PackManager(this);
+        this.packManager.startPreparation();
     }
 
     /**

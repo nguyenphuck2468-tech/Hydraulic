@@ -39,7 +39,7 @@ final class PackTextureOptimizer {
 
         long originalPixels = images.stream().mapToLong(ImageInfo::pixels).sum();
         if (profile == PackProfile.FULL || originalPixels == 0) {
-            return new Result(images.size(), 0, originalPixels, originalPixels);
+            return result(images, 0, originalPixels, originalPixels);
         }
         double totalScale = originalPixels > profile.maxTexturePixels()
                 ? Math.sqrt((double) profile.maxTexturePixels() / originalPixels) : 1.0;
@@ -57,7 +57,14 @@ final class PackTextureOptimizer {
             }
             outputPixels += (long) width * height;
         }
-        return new Result(images.size(), changed, originalPixels, outputPixels);
+        return result(images, changed, originalPixels, outputPixels);
+    }
+
+    private static Result result(List<ImageInfo> images, int changed, long originalPixels, long outputPixels) {
+        ImageInfo largest = images.stream().max(Comparator.comparingLong(ImageInfo::pixels)).orElse(null);
+        return new Result(images.size(), changed, originalPixels, outputPixels,
+                largest == null ? null : largest.path().toString().replace('\\', '/'),
+                largest == null ? 0 : largest.width(), largest == null ? 0 : largest.height());
     }
 
     private static ImageInfo inspect(Path path) {
@@ -124,7 +131,8 @@ final class PackTextureOptimizer {
         }
     }
 
-    record Result(int images, int resized, long originalPixels, long outputPixels) {
-        static final Result EMPTY = new Result(0, 0, 0, 0);
+    record Result(int images, int resized, long originalPixels, long outputPixels,
+                  String largestTexture, int largestWidth, int largestHeight) {
+        static final Result EMPTY = new Result(0, 0, 0, 0, null, 0, 0);
     }
 }
