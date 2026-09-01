@@ -49,6 +49,10 @@ Choose the client resource budget in `config/hydraulic/pack-profile.txt`.
 `balanced` (the default) uses a 1024-pixel edge and 256 million pixels; `full`
 preserves source resolution. Changing this value invalidates the generated
 pack identity so Bedrock does not retain content from another profile.
+Before packaging, Hydraulic follows Bedrock JSON references and removes
+unbound geometry, animation, controller, and texture files. Downscaled PNGs
+are cached by source content and target size, so unchanged textures are not
+decoded and resized again for every pack rebuild.
 To reduce negotiation and import work, `lite` also omits packs from mods that
 own no custom block, item, or entity; use `balanced` if such a library mod
 provides shared sounds, UI, or textures required by another pack.
@@ -75,6 +79,10 @@ testing cache reuse. A `.part` archive is never registered or reused.
 The report separates full native entity geometries, native geometries with
 generic animation, hitbox geometry fallbacks, unresolved item assets, model
 and texture resolutions, source-resource diagnostics, and validation warnings.
+It also lists Java item components that have no Bedrock custom-item equivalent
+and runtime item predicates that could not be bound. Damage, count, custom
+model data, component presence, broken/damaged state, trim material, and
+crossbow charge-type branches use Geyser runtime predicates when present.
 For an unresolved item, use `asset_resolutions.item-reason` to distinguish
 `missing-texture`, `unresolved-parent`, `special-renderer`, and `custom-tint`
 instead of assuming that the entire mod failed.

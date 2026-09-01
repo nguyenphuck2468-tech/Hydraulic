@@ -451,9 +451,9 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
     }
 
     /**
-     * Binds the entity's own converted geometry as {@code default} plus every
-     * sibling part model ({@code <path>_head.geo.json} and friends) as a named
-     * geometry variant. When no file is named exactly after the entity, the
+     * Binds the entity's own converted geometry as {@code default}. Sibling
+     * part models are not exposed as variants unless a render controller can
+     * actually select them. When no file is named exactly after the entity, the
      * converted geometries' own identifiers are searched for the entity name -
      * most GeckoLib mods name models after the entity inside the file rather
      * than in the file name.
@@ -464,7 +464,6 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
      * depending on a particular vanilla geometry or mod naming rule.</p>
      */
     private JsonObject collectGeometries(String namespace, String path, EntityDimensions dimensions, BedrockResourcePack pack) {
-        JsonObject geometries = new JsonObject();
         String defaultGeometry = null;
 
         if (pack.entityModels() != null) {
@@ -482,11 +481,6 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                     fuzzyMatch = null;
                     break;
                 }
-                if (base.startsWith(path + "_")) {
-                    geometries.addProperty(base.substring(path.length() + 1), "geometry." + namespace + "." + base);
-                    continue;
-                }
-
                 if (fuzzyMatch == null) {
                     String byIdentifier = geometryIdentifierFor(entry.getValue(), path);
                     if (byIdentifier != null) {
@@ -507,9 +501,6 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
         // Order matters for readability only: default first in the JSON.
         JsonObject ordered = new JsonObject();
         ordered.addProperty("default", defaultGeometry);
-        for (Map.Entry<String, JsonElement> variant : geometries.entrySet()) {
-            ordered.add(variant.getKey(), variant.getValue());
-        }
         return ordered;
     }
 

@@ -7,10 +7,12 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PackPathRewriterTest {
     @TempDir
@@ -72,5 +74,106 @@ class PackPathRewriterTest {
         assertEquals(0, result.rewritten());
         assertFalse(result.collision());
         assertTrue(Files.isRegularFile(texture));
+    }
+
+    @Test
+    void cleansPreparedPartsWhenSecondJsonWriteFails() throws IOException {
+        Fixture fixture = fixtureWithTwoAssets();
+        AtomicInteger writes = new AtomicInteger();
+
+        assertThrows(IOException.class, () -> PackPathRewriter.rewrite(temporaryDirectory, new PackPathRewriter.Operations() {
+            @Override
+            public void write(Path path, byte[] bytes) throws IOException {
+                if (writes.incrementAndGet() == 2) throw new IOException("injected second JSON write");
+                PackPathRewriter.Operations.super.write(path, bytes);
+            }
+        }));
+
+        assertTrue(Files.exists(fixture.first()));
+        assertTrue(Files.exists(fixture.second()));
+        assertNoParts();
+    }
+
+    @Test
+    void rollsBackFirstAssetWhenSecondMoveFails() throws IOException {
+        Fixture fixture = fixtureWithTwoAssets();
+        AtomicInteger moves = new AtomicInteger();
+
+        assertThrows(IOException.class, () -> PackPathRewriter.rewrite(temporaryDirectory, new PackPathRewriter.Operations() {
+            @Override
+            public void move(Path source, Path target) throws IOException {
+                if (moves.incrementAndGet() == 2) throw new IOException("injected second asset move");
+                PackPathRewriter.Operations.super.move(source, target);
+            }
+        }));
+
+        assertTrue(Files.exists(fixture.first()));
+        assertTrue(Files.exists(fixture.second()));
+        assertNoParts();
+    }
+
+    @Test
+    void restoresAssetsAndFirstJsonWhenSecondJsonPublishFails() throws IOException {
+        Fixture fixture = fixtureWithTwoAssets();
+        String firstJson = Files.readString(temporaryDirectory.resolve("models/first.json"));
+        String secondJson = Files.readString(temporaryDirectory.resolve("models/second.json"));
+        AtomicInteger replaces = new AtomicInteger();
+
+        assertThrows(IOException.class, () -> PackPathRewriter.rewrite(temporaryDirectory, new PackPathRewriter.Operations() {
+            @Override
+            public void replace(Path source, Path target) throws IOException {
+                if (replaces.incrementAndGet() == 2) throw new IOException("injected second JSON publish");
+                PackPathRewriter.Operations.super.replace(source, target);
+            }
+        }));
+
+        assertTrue(Files.exists(fixture.first()));
+        assertTrue(Files.exists(fixture.second()));
+        assertEquals(firstJson, Files.readString(temporaryDirectory.resolve("models/first.json")));
+        assertEquals(secondJson, Files.readString(temporaryDirectory.resolve("models/second.json")));
+        assertNoParts();
+    }
+
+    @Test
+    void preservesOriginalFailureAndCleansPartsWhenRollbackAlsoFails() throws IOException {
+        fixtureWithTwoAssets();
+        AtomicInteger moves = new AtomicInteger();
+
+        IOException failure = assertThrows(IOException.class, () -> PackPathRewriter.rewrite(temporaryDirectory, new PackPathRewriter.Operations() {
+            @Override
+            public void move(Path source, Path target) throws IOException {
+                int call = moves.incrementAndGet();
+                if (call == 2) throw new IOException("injected forward failure");
+                if (call == 3) throw new IOException("injected rollback failure");
+                PackPathRewriter.Operations.super.move(source, target);
+            }
+        }));
+
+        assertEquals("injected forward failure", failure.getMessage());
+        assertEquals(1, failure.getSuppressed().length);
+        assertNoParts();
+    }
+
+    private Fixture fixtureWithTwoAssets() throws IOException {
+        Path first = temporaryDirectory.resolve("textures/items/example/" + "first_long_name_".repeat(6) + ".png");
+        Path second = temporaryDirectory.resolve("textures/items/example/" + "second_long_name_".repeat(6) + ".png");
+        Files.createDirectories(first.getParent());
+        Files.writeString(first, "first");
+        Files.writeString(second, "second");
+        String firstRef = temporaryDirectory.relativize(first).toString().replace('\\', '/');
+        String secondRef = temporaryDirectory.relativize(second).toString().replace('\\', '/');
+        Files.createDirectories(temporaryDirectory.resolve("models"));
+        Files.writeString(temporaryDirectory.resolve("models/first.json"), "{\"texture\":\"" + firstRef + "\"}");
+        Files.writeString(temporaryDirectory.resolve("models/second.json"), "{\"texture\":\"" + secondRef + "\"}");
+        return new Fixture(first, second);
+    }
+
+    private void assertNoParts() throws IOException {
+        try (var paths = Files.walk(temporaryDirectory)) {
+            assertFalse(paths.anyMatch(path -> path.getFileName().toString().endsWith(".part")));
+        }
+    }
+
+    private record Fixture(Path first, Path second) {
     }
 }

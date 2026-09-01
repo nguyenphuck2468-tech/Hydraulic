@@ -69,7 +69,6 @@ import java.util.stream.Stream;
  */
 public class PackManager {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final long PREPARATION_STARTUP_WAIT_SECONDS = 30;
 
     /**
      * Increment when the generated Bedrock-pack contract changes. This keeps
@@ -77,7 +76,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "25";
+    public static final String PACK_GENERATION_REVISION = "26";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -113,6 +112,7 @@ public class PackManager {
     private String clientRuntimeRevision = "unavailable";
     private Map<String, List<ResourcePack>> preparedModPacks = Map.of();
     private CompletableFuture<Void> preparation;
+    private boolean initialized;
 
     public PackManager(HydraulicImpl hydraulic) {
         this.hydraulic = hydraulic;
@@ -137,21 +137,30 @@ public class PackManager {
      */
     public void initialize() {
         startPreparation();
+        GeyserApi.api().eventBus().register(this.hydraulic, new PackListener(this.hydraulic, this));
+        if (preparation.isDone()) awaitPreparation(0);
+    }
+
+    /** Waits within the caller's own budget and installs modules exactly once. */
+    boolean awaitPreparation(long timeoutMillis) {
         try {
-            preparation.get(PREPARATION_STARTUP_WAIT_SECONDS, TimeUnit.SECONDS);
+            preparation.get(Math.max(0, timeoutMillis), TimeUnit.MILLISECONDS);
         } catch (TimeoutException exception) {
-            LOGGER.error("Hydraulic pack preparation was not ready after {} seconds; server will continue without converted packs",
-                    PREPARATION_STARTUP_WAIT_SECONDS);
-            return;
+            return false;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             LOGGER.error("Interrupted while waiting for Hydraulic pack preparation");
-            return;
+            return false;
         } catch (ExecutionException exception) {
             LOGGER.error("Hydraulic pack preparation failed; server will continue without converted packs", exception.getCause());
-            return;
+            return false;
         }
+        initializePreparedModules();
+        return true;
+    }
 
+    private synchronized void initializePreparedModules() {
+        if (initialized) return;
         // Loader registries are not complete when early background preparation starts,
         // especially on NeoForge. Ownership lookup must run after registration.
         initializeModLookups();
@@ -181,7 +190,7 @@ public class PackManager {
             }
         }
         this.preparedModPacks = Map.of();
-        GeyserApi.api().eventBus().register(this.hydraulic, new PackListener(this.hydraulic, this));
+        initialized = true;
     }
 
     /** Network, archive reading and resource indexing begin at mod load, before server startup. */
@@ -305,7 +314,14 @@ public class PackManager {
 
                     module.postProcess0(context);
                 }
-                PackTextureOptimizer.Result optimized = PackTextureOptimizer.optimize(bedrockPack.directory(), profile);
+                PackReferencePruner.Result pruned = PackReferencePruner.prune(bedrockPack.directory());
+                report.outcome("asset-pruned", pruned.total());
+                report.resolution("asset-pruned", "breakdown", "geometry=" + pruned.geometries()
+                        + ",animation=" + pruned.animations() + ",animation_controller=" + pruned.animationControllers()
+                        + ",render_controller=" + pruned.renderControllers() + ",texture=" + pruned.textures()
+                        + ",texture_duplicate=" + pruned.duplicateTextures());
+                PackTextureOptimizer.Result optimized = PackTextureOptimizer.optimize(bedrockPack.directory(), profile,
+                        hydraulic.dataFolder(Constants.MOD_ID).resolve("cache/optimized-textures"));
                 report.resolution("pack-profile", "selected", profile.id());
                 report.resolution("texture-pixels", "before", Long.toString(optimized.originalPixels()));
                 report.resolution("texture-pixels", "after", Long.toString(optimized.outputPixels()));
@@ -314,6 +330,7 @@ public class PackManager {
                             optimized.largestWidth() + "x" + optimized.largestHeight());
                 }
                 report.outcome("texture-resized", optimized.resized());
+                report.outcome("texture-cache-hit", optimized.cacheHits());
             } finally {
                 report.timing("post_process", (System.nanoTime() - postProcessStartedAt) / 1_000_000);
             }
@@ -321,6 +338,7 @@ public class PackManager {
 
         try {
             Files.deleteIfExists(stagedPack);
+            if (Thread.currentThread().isInterrupted()) return PackCreationResult.FAILED;
 
             for (final Path root : mod.roots()) {
                 for (SourceResourceValidator.Finding finding : SourceResourceValidator.validate(root)) {
@@ -331,6 +349,10 @@ public class PackManager {
             }
             long rootsStartedAt = System.nanoTime();
             converter.convert();
+            if (Thread.currentThread().isInterrupted()) {
+                discardStagedPack(stagedPack, mod.id());
+                return PackCreationResult.FAILED;
+            }
             for (EntityModelScanner.Diagnostic diagnostic : converter.entityModelDiagnostics()) {
                 report.fallback("entity-reflection");
                 report.outcome("entity-reflection-fallback", diagnostic.path());
@@ -347,6 +369,10 @@ public class PackManager {
 
         try {
             converter.pack();
+            if (Thread.currentThread().isInterrupted()) {
+                discardStagedPack(stagedPack, mod.id());
+                return PackCreationResult.FAILED;
+            }
         } catch (IOException | RuntimeException exception) {
             discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to export pack for mod {}", mod.id(), exception);

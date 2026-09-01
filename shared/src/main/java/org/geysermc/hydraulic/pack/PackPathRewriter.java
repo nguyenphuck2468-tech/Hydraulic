@@ -33,6 +33,10 @@ final class PackPathRewriter {
     }
 
     static Result rewrite(Path root) throws IOException {
+        return rewrite(root, Operations.SYSTEM);
+    }
+
+    static Result rewrite(Path root, Operations operations) throws IOException {
         MovePlan plan = moves(root);
         if (plan.collision()) return new Result(0, true);
         if (plan.moves().isEmpty()) return Result.NONE;
@@ -44,7 +48,7 @@ final class PackPathRewriter {
 
         replacements = replacements(root, referencedMoves);
         JsonPlan json = jsonRewrites(root, referencedMoves, replacements);
-        apply(referencedMoves, json.rewrites());
+        apply(referencedMoves, json.rewrites(), operations);
         return new Result(referencedMoves.size(), false);
     }
 
@@ -174,7 +178,7 @@ final class PackPathRewriter {
         return false;
     }
 
-    private static void apply(Map<Path, Path> moves, List<JsonRewrite> rewrites) throws IOException {
+    private static void apply(Map<Path, Path> moves, List<JsonRewrite> rewrites, Operations operations) throws IOException {
         List<Map.Entry<Path, Path>> completedMoves = new ArrayList<>();
         List<PreparedRewrite> prepared = new ArrayList<>();
         List<JsonRewrite> published = new ArrayList<>();
@@ -182,26 +186,42 @@ final class PackPathRewriter {
             for (JsonRewrite rewrite : rewrites) {
                 Files.createDirectories(rewrite.target().getParent());
                 Path temporary = rewrite.target().resolveSibling(rewrite.target().getFileName() + ".part");
-                Files.deleteIfExists(temporary);
-                Files.write(temporary, rewrite.rewritten());
+                operations.deleteIfExists(temporary);
+                operations.write(temporary, rewrite.rewritten());
                 prepared.add(new PreparedRewrite(rewrite, temporary));
             }
             for (Map.Entry<Path, Path> move : moves.entrySet()) {
                 Files.createDirectories(move.getValue().getParent());
-                move(move.getKey(), move.getValue());
+                operations.move(move.getKey(), move.getValue());
                 completedMoves.add(move);
             }
             for (PreparedRewrite rewrite : prepared) {
-                replace(rewrite.temporary(), rewrite.rewrite().target());
+                operations.replace(rewrite.temporary(), rewrite.rewrite().target());
                 published.add(rewrite.rewrite());
             }
         } catch (IOException exception) {
             for (int index = completedMoves.size() - 1; index >= 0; index--) {
                 Map.Entry<Path, Path> move = completedMoves.get(index);
-                move(move.getValue(), move.getKey());
+                try {
+                    operations.move(move.getValue(), move.getKey());
+                } catch (IOException rollbackFailure) {
+                    exception.addSuppressed(rollbackFailure);
+                }
             }
-            for (JsonRewrite rewrite : published) PackManager.writeStringAtomically(rewrite.source(), new String(rewrite.original(), StandardCharsets.UTF_8));
-            for (PreparedRewrite rewrite : prepared) Files.deleteIfExists(rewrite.temporary());
+            for (JsonRewrite rewrite : published) {
+                try {
+                    operations.restore(rewrite.source(), rewrite.original());
+                } catch (IOException rollbackFailure) {
+                    exception.addSuppressed(rollbackFailure);
+                }
+            }
+            for (PreparedRewrite rewrite : prepared) {
+                try {
+                    operations.deleteIfExists(rewrite.temporary());
+                } catch (IOException cleanupFailure) {
+                    exception.addSuppressed(cleanupFailure);
+                }
+            }
             throw exception;
         }
     }
@@ -224,6 +244,31 @@ final class PackPathRewriter {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException ignored) {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    interface Operations {
+        Operations SYSTEM = new Operations() {
+        };
+
+        default void write(Path path, byte[] bytes) throws IOException {
+            Files.write(path, bytes);
+        }
+
+        default void move(Path source, Path target) throws IOException {
+            PackPathRewriter.move(source, target);
+        }
+
+        default void replace(Path source, Path target) throws IOException {
+            PackPathRewriter.replace(source, target);
+        }
+
+        default void restore(Path path, byte[] bytes) throws IOException {
+            PackManager.writeStringAtomically(path, new String(bytes, StandardCharsets.UTF_8));
+        }
+
+        default void deleteIfExists(Path path) throws IOException {
+            Files.deleteIfExists(path);
         }
     }
 

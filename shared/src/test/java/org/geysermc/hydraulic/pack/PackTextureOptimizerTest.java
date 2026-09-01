@@ -27,4 +27,23 @@ class PackTextureOptimizerTest {
         assertEquals(128, optimized.getWidth());
         assertEquals(256, optimized.getHeight());
     }
+
+    @Test
+    void reusesContentAddressedDownscaleAcrossPacks() throws Exception {
+        Path first = temporaryDirectory.resolve("first/textures/entity/example.png");
+        Path second = temporaryDirectory.resolve("second/textures/entity/example.png");
+        Path cache = temporaryDirectory.resolve("cache");
+        Files.createDirectories(first.getParent());
+        Files.createDirectories(second.getParent());
+        BufferedImage source = new BufferedImage(512, 1024, BufferedImage.TYPE_INT_ARGB);
+        ImageIO.write(source, "png", first.toFile());
+        ImageIO.write(source, "png", second.toFile());
+
+        var firstResult = PackTextureOptimizer.optimize(temporaryDirectory.resolve("first"), PackProfile.LITE, cache);
+        var secondResult = PackTextureOptimizer.optimize(temporaryDirectory.resolve("second"), PackProfile.LITE, cache);
+
+        assertEquals(0, firstResult.cacheHits());
+        assertEquals(1, secondResult.cacheHits());
+        assertEquals(128, ImageIO.read(second.toFile()).getWidth());
+    }
 }

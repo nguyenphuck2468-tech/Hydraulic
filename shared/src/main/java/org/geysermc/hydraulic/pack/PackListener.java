@@ -41,6 +41,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipFile;
 
 /**
@@ -54,6 +55,7 @@ public class PackListener {
             (Runtime.getRuntime().availableProcessors() + 1) / 2));
     private final HydraulicImpl hydraulic;
     private final PackManager manager;
+    private final Map<String, CompletableFuture<PackResult>> conversions = new ConcurrentHashMap<>();
     private ExecutorService threadPool = newThreadPool();
 
     public PackListener(HydraulicImpl hydraulic, PackManager manager) {
@@ -72,6 +74,12 @@ public class PackListener {
     public void onLoadResourcePacks(GeyserDefineResourcePacksEvent event) {
         long startedAt = System.nanoTime();
         EntityEventRegistrar.resetPackBacked();
+        long preparationBudget = Math.min(10_000, remainingBudgetMillis(startedAt));
+        if (!manager.awaitPreparation(preparationBudget)) {
+            LOGGER.error("Hydraulic pack inputs were not ready after {} ms; pack delivery is deferred to the next resource-pack event or server start",
+                    preparationBudget);
+            return;
+        }
         PackPlan plan;
         LOGGER.info("Planning Hydraulic packs with {} conversion worker(s) and a {} ms startup budget",
                 CONVERSION_THREADS, STARTUP_CONVERSION_BUDGET_MILLIS);
@@ -115,7 +123,8 @@ public class PackListener {
 
         List<CompletableFuture<PackResult>> futures = new ArrayList<>();
         for (PackRequest request : packsToLoad) {
-            futures.add(CompletableFuture.supplyAsync(() -> {
+            String conversionKey = request.mod().id() + ":" + request.fingerprint();
+            CompletableFuture<PackResult> conversion = conversions.computeIfAbsent(conversionKey, ignored -> CompletableFuture.supplyAsync(() -> {
                 LOGGER.info("Converting pack for mod {}", request.mod().id());
                 try {
                     long conversionStarted = System.nanoTime();
@@ -127,6 +136,12 @@ public class PackListener {
                     return new PackResult(request.mod().id(), request.packPath(), PackManager.PackCreationResult.FAILED, 0);
                 }
             }, executor));
+            conversion.whenComplete((result, failure) -> {
+                if (failure != null || result == null || result.outcome() == PackManager.PackCreationResult.FAILED) {
+                    conversions.remove(conversionKey, conversion);
+                }
+            });
+            futures.add(conversion);
         }
 
         List<PackResult> completed = awaitCompleted(futures, remainingBudgetMillis(startedAt));
@@ -148,8 +163,7 @@ public class PackListener {
             }
         }
         if (!unfinishedMods.isEmpty()) {
-            futures.stream().filter(future -> !future.isDone()).forEach(future -> future.cancel(true));
-            LOGGER.error("Skipped {} pack conversion(s) after {} ms to keep server startup below the watchdog limit: {}; completed archives remain available on the next start",
+            LOGGER.error("Deferred registration of {} pack conversion(s) after {} ms to keep server startup below the watchdog limit: {}; workers may finish atomic archives for the next start",
                     unfinishedMods.size(), STARTUP_CONVERSION_BUDGET_MILLIS, String.join(", ", unfinishedMods));
         }
 

@@ -54,6 +54,7 @@ dependencies {
     compileOnly(libs.asm)
 
     runtimeOnly(libs.pack.converter)
+    runtimeOnly("net.kyori:examination-api:1.3.0")
     includeTransitive(libs.pack.converter)
 
     localRuntime(libs.geyser.fabric) {

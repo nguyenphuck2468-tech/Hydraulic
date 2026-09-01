@@ -5,6 +5,7 @@ import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.component.TypedDataComponent;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -20,6 +21,7 @@ import org.geysermc.geyser.api.util.Identifier;
 import org.geysermc.hydraulic.util.HydraulicKey;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -52,6 +54,18 @@ public class ComponentConverter {
                             )
             );
         }
+    }
+
+    /** Components present on the Java item but not represented in the Bedrock custom-item contract. */
+    public static List<String> unsupportedComponents(DataComponentMap componentMap) {
+        return componentMap.stream()
+                .map(TypedDataComponent::type)
+                .filter(type -> !COMPONENT_CONVERT_MAP.containsKey(type))
+                .map(BuiltInRegistries.DATA_COMPONENT_TYPE::getKey)
+                .filter(java.util.Objects::nonNull)
+                .map(Object::toString)
+                .sorted()
+                .toList();
     }
 
     static {

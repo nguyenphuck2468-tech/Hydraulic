@@ -12,7 +12,15 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import org.geysermc.geyser.api.event.lifecycle.GeyserDefineCustomItemsEvent;
 import org.geysermc.geyser.api.item.custom.v2.CustomItemBedrockOptions;
+import org.geysermc.geyser.api.item.custom.v2.CustomItemDefinition;
 import org.geysermc.geyser.api.item.custom.v2.NonVanillaCustomItemDefinition;
+import org.geysermc.geyser.api.predicate.MinecraftPredicate;
+import org.geysermc.geyser.api.predicate.PredicateStrategy;
+import org.geysermc.geyser.api.predicate.context.item.ChargedProjectile;
+import org.geysermc.geyser.api.predicate.context.item.ItemPredicateContext;
+import org.geysermc.geyser.api.predicate.item.ItemConditionPredicate;
+import org.geysermc.geyser.api.predicate.item.ItemMatchPredicate;
+import org.geysermc.geyser.api.predicate.item.ItemRangeDispatchPredicate;
 import org.geysermc.geyser.api.item.custom.v2.component.geyser.GeyserBlockPlacer;
 import org.geysermc.geyser.api.item.custom.v2.component.geyser.GeyserChargeable;
 import org.geysermc.geyser.api.item.custom.v2.component.geyser.GeyserItemDataComponents;
@@ -32,6 +40,7 @@ import org.geysermc.pack.converter.type.model.ModelStitcher;
 import org.jetbrains.annotations.NotNull;
 import team.unnamed.creative.ResourcePack;
 import team.unnamed.creative.item.*;
+import team.unnamed.creative.item.property.*;
 import team.unnamed.creative.model.Model;
 import team.unnamed.creative.model.ModelTexture;
 
@@ -52,6 +61,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     private final List<Identifier> itemsWith2dIcon = new ArrayList<>();
     private final List<Identifier> handheldItems = new ArrayList<>();
     private final Map<String, String> itemBuiltinTexture = new HashMap<>();
+    private final Map<String, List<RuntimeVariant>> runtimeVariants = new HashMap<>();
 
     public ItemPackModule() {
         this.listenOn(GeyserDefineCustomItemsEvent.class, this::onDefineCustomItems);
@@ -173,6 +183,12 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         PackLogListener packLogListener = new PackLogListener(context.logger());
         for (Item item : items) {
             Identifier itemLocation = BuiltInRegistries.ITEM.getKey(item);
+            List<String> unsupportedComponents = ComponentConverter.unsupportedComponents(item.components());
+            if (!unsupportedComponents.isEmpty()) {
+                context.report().outcome("item-component-dropped", itemLocation.toString());
+                context.report().resolution("item-component-dropped", itemLocation.toString(),
+                        String.join(",", unsupportedComponents));
+            }
             Identifier itemModelLocation = itemModelLocation(item, itemLocation);
             Identifier blockLocation = item instanceof BlockItem blockItem ? BuiltInRegistries.BLOCK.getKey(blockItem.getBlock()) : null;
             ItemAssetResolver.ResolvedItemAsset resolvedAsset = ItemAssetResolver.resolve(context.mod(), itemLocation, itemModelLocation, blockLocation);
@@ -180,9 +196,22 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 context.report().outcome("item-dynamic-model", itemLocation.toString());
                 context.report().resolution("item-dynamic-model", itemLocation.toString(),
                         resolvedAsset.dynamicModelKinds() + " candidates=" + resolvedAsset.candidateTextures());
-                // Geyser cannot bind Java's dynamic predicates yet. Exporting
-                // anonymous _dynamic_N atlas entries only bloats every client
-                // download without ever selecting those textures.
+            }
+
+            team.unnamed.creative.item.Item creativeItem = assets.item(Key.key(itemModelLocation.toString()));
+            if (creativeItem == null && !itemModelLocation.equals(itemLocation)) {
+                creativeItem = assets.item(Key.key(itemLocation.toString()));
+            }
+            if (creativeItem != null) {
+                runtimeVariants.remove(itemLocation.toString());
+                List<RuntimeVariant> variants = new ArrayList<>();
+                collectRuntimeVariants(context, bedrockPack, itemLocation, creativeItem.model(), List.of(), variants,
+                        Collections.newSetFromMap(new IdentityHashMap<>()));
+                if (!variants.isEmpty()) {
+                    runtimeVariants.put(itemLocation.toString(), List.copyOf(variants));
+                    context.report().outcome("item-runtime-variant", itemLocation.toString());
+                    context.report().resolution("item-runtime-variant", itemLocation.toString(), Integer.toString(variants.size()));
+                }
             }
 
             Model baseModel = assets.model(Key.key(itemModelLocation.getNamespace(), "item/" + itemModelLocation.getPath()));
@@ -433,6 +462,143 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
         return itemModel == null ? fallback : itemModel;
     }
 
+    private static void collectRuntimeVariants(PackPostProcessContext<?> context, BedrockResourcePack pack, Identifier item,
+                                               ItemModel model, List<MinecraftPredicate<? super ItemPredicateContext>> predicates,
+                                               List<RuntimeVariant> variants, Set<ItemModel> visited) {
+        if (model == null || !visited.add(model)) return;
+        try {
+            if (model instanceof ReferenceItemModel reference) {
+                Model source = context.javaResourcePack().model(reference.model());
+                if (source == null) return;
+                Model stitched = new ModelStitcher(context.modelProvider(), source, new PackLogListener(context.logger())).stitch();
+                if (stitched == null) return;
+                List<Key> layers = modelLayers(stitched.textures().layers());
+                if (layers.isEmpty()) return;
+                ItemTexture texture = writeItemTexture(context, pack, item, layers);
+                if (texture == null) return;
+                String icon = item + "_runtime_" + variants.size();
+                pack.addItemTexture(icon, texture.path());
+                variants.add(new RuntimeVariant(icon, List.copyOf(predicates), variants.size() + 1));
+                return;
+            }
+            if (model instanceof ConditionItemModel condition) {
+                MinecraftPredicate<? super ItemPredicateContext> predicate = conditionPredicate(condition.condition());
+                if (predicate == null) {
+                    context.report().resolution("item-predicate-unsupported", item.toString(), propertyName(condition.condition()));
+                    return;
+                }
+                collectRuntimeVariants(context, pack, item, condition.onTrue(), append(predicates, predicate), variants, visited);
+                collectRuntimeVariants(context, pack, item, condition.onFalse(), append(predicates, predicate.negate()), variants, visited);
+                return;
+            }
+            if (model instanceof RangeDispatchItemModel range) {
+                for (RangeDispatchItemModel.Entry entry : range.entries()) {
+                    MinecraftPredicate<? super ItemPredicateContext> predicate = rangePredicate(range.property(), range.scale(), entry.threshold());
+                    if (predicate != null) collectRuntimeVariants(context, pack, item, entry.model(), append(predicates, predicate), variants, visited);
+                    else context.report().resolution("item-predicate-unsupported", item.toString(), propertyName(range.property()));
+                }
+                return;
+            }
+            if (model instanceof SelectItemModel select) {
+                for (SelectItemModel.Case itemCase : select.cases()) {
+                    for (com.google.gson.JsonElement value : itemCase.when()) {
+                        MinecraftPredicate<? super ItemPredicateContext> predicate = selectPredicate(select.property(), value);
+                        if (predicate != null) collectRuntimeVariants(context, pack, item, itemCase.model(), append(predicates, predicate), variants, visited);
+                        else context.report().resolution("item-predicate-unsupported", item.toString(), propertyName(select.property()));
+                    }
+                }
+            }
+        } finally {
+            visited.remove(model);
+        }
+    }
+
+    private static String propertyName(Object property) {
+        if (property instanceof net.kyori.adventure.key.Keyed keyed) return keyed.key().asString();
+        return property.getClass().getSimpleName();
+    }
+
+    private static List<MinecraftPredicate<? super ItemPredicateContext>> append(
+            List<MinecraftPredicate<? super ItemPredicateContext>> predicates,
+            MinecraftPredicate<? super ItemPredicateContext> predicate) {
+        List<MinecraftPredicate<? super ItemPredicateContext>> result = new ArrayList<>(predicates);
+        result.add(predicate);
+        return result;
+    }
+
+    static MinecraftPredicate<? super ItemPredicateContext> conditionPredicate(ItemBooleanProperty property) {
+        if (property instanceof HasComponentItemBooleanProperty component) {
+            return ItemConditionPredicate.hasComponent(geyserIdentifier(component.component()));
+        }
+        if (property instanceof CustomModelDataItemBooleanProperty custom) return ItemConditionPredicate.customModelData(custom.index());
+        if (!(property instanceof NoFieldItemBooleanProperty named)) return null;
+        String key = named.key().value();
+        return switch (key) {
+            case "broken" -> ItemConditionPredicate.BROKEN;
+            case "damaged" -> ItemConditionPredicate.DAMAGED;
+            case "fishing_rod_cast" -> ItemConditionPredicate.FISHING_ROD_CAST;
+            default -> null;
+        };
+    }
+
+    static boolean supportsCondition(ItemBooleanProperty property) {
+        if (property instanceof HasComponentItemBooleanProperty || property instanceof CustomModelDataItemBooleanProperty) return true;
+        return property instanceof NoFieldItemBooleanProperty named
+                && Set.of("broken", "damaged", "fishing_rod_cast").contains(named.key().value());
+    }
+
+    static MinecraftPredicate<? super ItemPredicateContext> rangePredicate(ItemNumericProperty property, float scale, float threshold) {
+        double value = threshold / Math.max(scale, Float.MIN_NORMAL);
+        if (property instanceof DamageItemNumericProperty damage) {
+            return damage.normalize() ? ItemRangeDispatchPredicate.normalizedDamage(value) : ItemRangeDispatchPredicate.damage((int) value);
+        }
+        if (property instanceof CountItemNumericProperty count) {
+            return count.normalize() ? ItemRangeDispatchPredicate.normalizedCount(value) : ItemRangeDispatchPredicate.count((int) value);
+        }
+        if (property instanceof CustomModelDataItemNumericProperty custom) {
+            return ItemRangeDispatchPredicate.customModelData(custom.index(), (float) value);
+        }
+        if (property instanceof NoFieldItemNumericProperty named && named.key().value().equals("bundle/fullness")) {
+            return ItemRangeDispatchPredicate.bundleFullness(value);
+        }
+        return null;
+    }
+
+    static boolean supportsRange(ItemNumericProperty property) {
+        return property instanceof DamageItemNumericProperty || property instanceof CountItemNumericProperty
+                || property instanceof CustomModelDataItemNumericProperty
+                || property instanceof NoFieldItemNumericProperty named && named.key().value().equals("bundle/fullness");
+    }
+
+    static MinecraftPredicate<? super ItemPredicateContext> selectPredicate(ItemStringProperty property, com.google.gson.JsonElement value) {
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) return null;
+        String selected = value.getAsString();
+        if (property instanceof CustomModelDataItemStringProperty custom) {
+            return ItemMatchPredicate.customModelData(custom.index(), selected);
+        }
+        if (!(property instanceof NoFieldItemStringProperty named)) return null;
+        return switch (named.key().value()) {
+            case "charge_type" -> switch (selected.substring(selected.lastIndexOf(':') + 1)) {
+                case "arrow" -> ItemMatchPredicate.chargeType(ChargedProjectile.ChargeType.ARROW);
+                case "rocket" -> ItemMatchPredicate.chargeType(ChargedProjectile.ChargeType.ROCKET);
+                default -> null;
+            };
+            case "trim_material" -> ItemMatchPredicate.trimMaterial(geyserIdentifier(selected));
+            default -> null;
+        };
+    }
+
+    static boolean supportsSelect(ItemStringProperty property) {
+        return property instanceof CustomModelDataItemStringProperty
+                || property instanceof NoFieldItemStringProperty named
+                && Set.of("charge_type", "trim_material").contains(named.key().value());
+    }
+
+    private static org.geysermc.geyser.api.util.Identifier geyserIdentifier(String value) {
+        return value.indexOf(':') >= 0 ? org.geysermc.geyser.api.util.Identifier.of(value)
+                : org.geysermc.geyser.api.util.Identifier.of("minecraft", value);
+    }
+
     private static void reportReason(PackPostProcessContext<?> context, Identifier item, String reason) {
         if (!"layered-texture".equals(reason)) context.report().resolution("item-reason", item.toString(), reason);
     }
@@ -535,9 +701,25 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 customItemDefinition.bedrockOptions(customItemOptions);
 
                 event.register(customItemDefinition.build());
+                for (RuntimeVariant variant : runtimeVariants.getOrDefault(itemLocation.toString(), List.of())) {
+                    org.geysermc.geyser.api.util.Identifier variantId = org.geysermc.geyser.api.util.Identifier.of(
+                            itemLocation.getNamespace(), itemLocation.getPath() + "_hydraulic_runtime_" + variant.priority());
+                    CustomItemDefinition.Builder definition = CustomItemDefinition.builder(variantId, variantId)
+                            .displayName("%" + item.getDescriptionId())
+                            .priority(variant.priority())
+                            .predicateStrategy(PredicateStrategy.AND)
+                            .bedrockOptions(CustomItemBedrockOptions.builder().icon(variant.icon()).allowOffhand(true));
+                    variant.predicates().forEach(definition::predicate);
+                    event.register(org.geysermc.geyser.api.util.Identifier.of(itemLocation.toString()), definition.build());
+                }
             } catch (Exception e) {
                 context.logger().error("Unable to register {}:", itemLocation, e);
             }
         }
+    }
+
+    private record RuntimeVariant(String icon,
+                                  List<MinecraftPredicate<? super ItemPredicateContext>> predicates,
+                                  int priority) {
     }
 }

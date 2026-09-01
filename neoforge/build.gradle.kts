@@ -37,6 +37,7 @@ dependencies {
     shadow(project(path = ":shared", configuration = "transformProductionNeoForge")) { isTransitive = false }
 
     runtimeOnly(libs.pack.converter)
+    runtimeOnly("net.kyori:examination-api:1.3.0")
     includeTransitive(libs.pack.converter)
 
     localRuntime(libs.geyser.neoforge) {
