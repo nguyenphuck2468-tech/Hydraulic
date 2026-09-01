@@ -17,8 +17,9 @@ class PackManagerRuntimeClasspathTest {
         PackManager.addCodeSource(classpath, "org.joml.Quaternionfc");
         PackManager.addCodeSource(classpath, "org.joml.Quaternionfc");
         PackManager.addCodeSource(classpath, "com.google.common.collect.Maps");
+        PackManager.addCodeSource(classpath, "it.unimi.dsi.fastutil.objects.ObjectList");
 
-        assertEquals(2, classpath.size());
+        assertEquals(3, classpath.size());
         assertTrue(classpath.stream().allMatch(Files::exists));
     }
 }

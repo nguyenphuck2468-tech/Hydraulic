@@ -146,6 +146,22 @@ class PackArchiveValidatorTest {
     }
 
     @Test
+    void allowsAtlasReferencesProvidedByTheBedrockBasePack() throws IOException {
+        Path archive = temporaryDirectory.resolve("external-atlas.mcpack");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
+            entry(zip, "manifest.json", "{}");
+            entry(zip, PackManager.PACK_GENERATION_MARKER, "{}");
+            entry(zip, "textures/item_texture.json", "{\"texture_data\":{\"example:diamond\":{\"textures\":\"textures/items/diamond\"}}}");
+        }
+
+        PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
+
+        assertTrue(result.valid());
+        assertTrue(result.findings().stream().anyMatch(finding -> finding.code().equals("broken-texture-link")
+                && finding.severity() == PackArchiveValidator.Severity.WARNING));
+    }
+
+    @Test
     void reportsGeometryWithMostCubes() throws IOException {
         Path archive = temporaryDirectory.resolve("geometry.mcpack");
         try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {

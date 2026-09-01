@@ -36,11 +36,11 @@ class PackReferencePrunerTest {
 
         PackReferencePruner.Result result = PackReferencePruner.prune(root);
 
-        assertEquals(5, result.total());
+        assertEquals(4, result.total());
         assertTrue(Files.exists(root.resolve("models/entity/used.geo.json")));
         assertFalse(Files.exists(root.resolve("models/entity/orphan.geo.json")));
         assertTrue(Files.exists(root.resolve("textures/entity/used.png")));
-        assertFalse(Files.exists(root.resolve("textures/entity/orphan.png")));
+        assertTrue(Files.exists(root.resolve("textures/entity/orphan.png")));
     }
 
     @Test
@@ -54,7 +54,7 @@ class PackReferencePrunerTest {
     }
 
     @Test
-    void rewritesExactReferencesBeforeDeletingDuplicateTexture() throws Exception {
+    void retainsDuplicateTexturesUntilSerializedAtlasesCanBeRewritten() throws Exception {
         write("entity/example.entity.json", """
                 {"minecraft:client_entity":{"description":{"textures":{"first":"textures/entity/a","second":"textures/entity/b"}}}}
                 """);
@@ -63,12 +63,12 @@ class PackReferencePrunerTest {
 
         PackReferencePruner.Result result = PackReferencePruner.prune(root);
 
-        assertEquals(1, result.duplicateTextures());
+        assertEquals(0, result.duplicateTextures());
         assertTrue(Files.exists(root.resolve("textures/entity/a.png")));
-        assertFalse(Files.exists(root.resolve("textures/entity/b.png")));
+        assertTrue(Files.exists(root.resolve("textures/entity/b.png")));
         String entity = Files.readString(root.resolve("entity/example.entity.json"));
         assertTrue(entity.contains("textures/entity/a"));
-        assertFalse(entity.contains("textures/entity/b"));
+        assertTrue(entity.contains("textures/entity/b"));
     }
 
     @Test
