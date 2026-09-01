@@ -50,6 +50,7 @@ import java.util.stream.Stream;
  */
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
+    @SuppressWarnings("this-escape")
     public EntityPackModule() {
         this.postProcess(this::postProcess);
     }

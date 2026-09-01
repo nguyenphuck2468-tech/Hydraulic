@@ -14,6 +14,7 @@ import java.util.Map;
 
 @AutoService(PackModule.class)
 public class HydraulicPackModule extends PackModule<HydraulicPackModule> {
+    @SuppressWarnings("this-escape")
     public HydraulicPackModule() {
         this.postProcess(context -> {
             Map<String, List<String>> mappings;

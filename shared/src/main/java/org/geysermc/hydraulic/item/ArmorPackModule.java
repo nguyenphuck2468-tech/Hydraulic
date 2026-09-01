@@ -45,6 +45,7 @@ public class ArmorPackModule extends PackModule<ArmorPackModule> {
         ATTACHABLE_SCRIPTS.parentSetup("variable.chest_layer_visible = 0.0;");
     }
 
+    @SuppressWarnings("this-escape")
     public ArmorPackModule() {
         this.postProcess(this::postProcess);
     }

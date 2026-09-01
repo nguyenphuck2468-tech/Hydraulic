@@ -40,6 +40,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     private final List<Identifier> handheldItems = new ArrayList<>();
     private final Map<String, String> itemBuiltinTexture = new HashMap<>();
 
+    @SuppressWarnings("this-escape")
     public ItemPackModule() {
         this.listenOn(GeyserDefineCustomItemsEvent.class, this::onDefineCustomItems);
 

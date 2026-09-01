@@ -76,6 +76,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     private final Map<String, StateDefinition> blockStates = new HashMap<>();
     private final Set<String> emptyModels = new HashSet<>();
 
+    @SuppressWarnings("this-escape")
     public BlockPackModule() {
         this.listenOn(GeyserDefineCustomBlocksEvent.class, this::onDefineCustomBlocks);
 

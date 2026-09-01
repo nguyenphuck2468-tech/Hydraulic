@@ -63,6 +63,7 @@ public class BowPackModule extends TexturePackModule<BowPackModule> {
         ));
     }
 
+    @SuppressWarnings("this-escape")
     public BowPackModule() {
         this.postProcess(this::postProcess);
     }
