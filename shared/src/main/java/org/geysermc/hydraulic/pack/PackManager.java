@@ -110,6 +110,7 @@ public class PackManager {
     private List<ConverterPipeline<?, ?>> packConverters;
     private ModelStitcher.Provider modelProvider;
     private Path clientRuntime;
+    private String clientRuntimeRevision = "unavailable";
     private Map<String, List<ResourcePack>> preparedModPacks = Map.of();
     private CompletableFuture<Void> preparation;
 
@@ -221,6 +222,9 @@ public class PackManager {
                 SharedConstants.getCurrentVersion().id(),
                 new PackLogListener(LOGGER)
         );
+        if (Files.isRegularFile(clientRuntime)) {
+            clientRuntimeRevision = org.geysermc.hydraulic.util.PackUtil.getModUUID(List.of(clientRuntime)).toString();
+        }
 
         modelProvider = createModelProvider(mods, modPacks, this.getVanillaPath());
 
@@ -677,6 +681,7 @@ public class PackManager {
     }
 
     String identityRevision() {
-        return "hydraulic=" + PACK_GENERATION_REVISION + ";packconverter=" + packConverterRevision + ";profile=" + profile.id();
+        return "hydraulic=" + PACK_GENERATION_REVISION + ";packconverter=" + packConverterRevision
+                + ";runtime=" + clientRuntimeRevision + ";profile=" + profile.id();
     }
 }
