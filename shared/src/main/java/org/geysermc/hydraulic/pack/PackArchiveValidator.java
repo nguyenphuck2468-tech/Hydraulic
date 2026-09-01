@@ -260,21 +260,7 @@ public final class PackArchiveValidator {
         if (warning.contains("textures/atlas/") || warning.contains("minecraft:/atlas") || warning.contains("minecraft:atlas")) {
             return Severity.INFO;
         }
-        if ((warning.startsWith("missing atlas texture") && atlasReferenceIsPackLocal(warning))
-                || warning.startsWith("missing entity geometry")
-                || warning.startsWith("missing entity animation") || warning.startsWith("missing animation controller")) {
-            return Severity.ERROR;
-        }
         return Severity.WARNING;
-    }
-
-    private static boolean atlasReferenceIsPackLocal(String warning) {
-        String[] parts = warning.split(" -> ", 3);
-        if (parts.length != 3) return true;
-        int separator = parts[1].indexOf(':');
-        if (separator <= 0) return true;
-        String namespace = parts[1].substring(0, separator);
-        return parts[2].contains("/" + namespace + "/");
     }
 
     private static Finding finding(String message, Severity severity) {

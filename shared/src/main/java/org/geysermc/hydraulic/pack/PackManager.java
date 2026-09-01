@@ -76,7 +76,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "28";
+    public static final String PACK_GENERATION_REVISION = "29";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -316,12 +316,7 @@ public class PackManager {
 
                     module.postProcess0(context);
                 }
-                PackReferencePruner.Result pruned = PackReferencePruner.prune(bedrockPack.directory());
-                report.outcome("asset-pruned", pruned.total());
-                report.resolution("asset-pruned", "breakdown", "geometry=" + pruned.geometries()
-                        + ",animation=" + pruned.animations() + ",animation_controller=" + pruned.animationControllers()
-                        + ",render_controller=" + pruned.renderControllers() + ",texture=" + pruned.textures()
-                        + ",texture_duplicate=" + pruned.duplicateTextures());
+                report.resolution("asset-preservation", "mode", "lossless-pre-serialization");
                 PackTextureOptimizer.Result optimized = PackTextureOptimizer.optimize(bedrockPack.directory(), profile,
                         hydraulic.dataFolder(Constants.MOD_ID).resolve("cache/optimized-textures"));
                 report.resolution("pack-profile", "selected", profile.id());
@@ -421,10 +416,10 @@ public class PackManager {
                         report.resolution("validation-error", Integer.toString(index + 1), fatalFindings.get(index));
                     }
                     writeReport(mod.id(), report, blockCount, itemCount, entityCount, Files.size(stagedPack));
-                    discardStagedPack(stagedPack, mod.id());
+                    Path quarantined = quarantineStagedPack(stagedPack, packPath);
                     int shown = Math.min(20, fatalFindings.size());
-                    LOGGER.error("Discarded invalid pack for {} [{} fatal finding(s); showing {}]: {}{}", mod.id(), fatalFindings.size(), shown,
-                            String.join("; ", fatalFindings.subList(0, shown)), fatalFindings.size() > shown ? " ..." : "");
+                    LOGGER.error("Quarantined structurally invalid pack for {} at {} [{} fatal finding(s); showing {}]: {}{}", mod.id(), quarantined,
+                            fatalFindings.size(), shown, String.join("; ", fatalFindings.subList(0, shown)), fatalFindings.size() > shown ? " ..." : "");
                     return PackCreationResult.FAILED;
                 }
                 if (validation.metadataOnly()) {
@@ -457,6 +452,7 @@ public class PackManager {
                 LOGGER.info("Conversion timings {} [assets={} ms, package={} ms, validation={} ms]", mod.id(),
                         assetsMillis, packageMillis, validationMillis);
                 publish(stagedPack, packPath);
+                deleteInvalidPack(packPath);
                 PackListener.deleteMetadataOnlyMarker(packPath);
                 writeReport(mod.id(), report, blockCount, itemCount, entityCount, archiveBytes);
             } catch (IOException exception) {
@@ -479,6 +475,32 @@ public class PackManager {
 
     static Path stagedPackPath(Path packPath) {
         return packPath.resolveSibling(packPath.getFileName() + ".part");
+    }
+
+    static Path invalidPackPath(Path packPath) {
+        String name = packPath.getFileName().toString();
+        if (name.endsWith(".mcpack")) name = name.substring(0, name.length() - ".mcpack".length());
+        return packPath.resolveSibling(name + ".invalid.mcpack");
+    }
+
+    static Path quarantineStagedPack(Path stagedPack, Path packPath) {
+        Path invalidPack = invalidPackPath(packPath);
+        try {
+            publish(stagedPack, invalidPack);
+            return invalidPack;
+        } catch (IOException exception) {
+            LOGGER.error("Could not move structurally invalid archive to {}; preserving it at {}", invalidPack, stagedPack, exception);
+            return Files.isRegularFile(invalidPack) ? invalidPack : stagedPack;
+        }
+    }
+
+    private static void deleteInvalidPack(Path packPath) {
+        Path invalidPack = invalidPackPath(packPath);
+        try {
+            Files.deleteIfExists(invalidPack);
+        } catch (IOException exception) {
+            LOGGER.warn("Could not remove stale quarantined pack {}", invalidPack, exception);
+        }
     }
 
     private void writeReport(String modId, ConversionReport report, int blocks, int items, int entities, long archiveBytes) {

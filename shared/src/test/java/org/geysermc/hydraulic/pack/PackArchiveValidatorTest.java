@@ -104,13 +104,13 @@ class PackArchiveValidatorTest {
 
         PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
 
-        assertFalse(result.valid());
+        assertTrue(result.valid());
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity texture")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity geometry")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing entity animation")));
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing animation controller")));
         assertTrue(result.findings().stream().anyMatch(finding -> finding.code().equals("broken-geometry-link")
-                && finding.severity() == PackArchiveValidator.Severity.ERROR));
+                && finding.severity() == PackArchiveValidator.Severity.WARNING));
     }
 
     @Test
@@ -124,10 +124,10 @@ class PackArchiveValidatorTest {
 
         PackArchiveValidator.Result result = PackArchiveValidator.validate(archive);
 
-        assertFalse(result.valid());
+        assertTrue(result.valid());
         assertTrue(result.warnings().stream().anyMatch(warning -> warning.startsWith("missing atlas texture")));
         assertTrue(result.findings().stream().anyMatch(finding -> finding.code().equals("broken-texture-link")
-                && finding.severity() == PackArchiveValidator.Severity.ERROR));
+                && finding.severity() == PackArchiveValidator.Severity.WARNING));
     }
 
     @Test

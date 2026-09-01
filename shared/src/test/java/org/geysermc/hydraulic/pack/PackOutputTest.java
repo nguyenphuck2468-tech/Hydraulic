@@ -37,4 +37,18 @@ class PackOutputTest {
         assertEquals("complete", Files.readString(report));
         assertFalse(Files.exists(report.resolveSibling("report.json.part")));
     }
+
+    @Test
+    void quarantinesStructurallyInvalidArchiveWithoutDeletingIt() throws IOException {
+        Path output = temporaryDirectory.resolve("alexsmobs.mcpack");
+        Path staged = PackManager.stagedPackPath(output);
+        Files.writeString(staged, "diagnostic archive");
+
+        Path quarantined = PackManager.quarantineStagedPack(staged, output);
+
+        assertEquals(temporaryDirectory.resolve("alexsmobs.invalid.mcpack"), quarantined);
+        assertEquals("diagnostic archive", Files.readString(quarantined));
+        assertFalse(Files.exists(staged));
+        assertFalse(Files.exists(output));
+    }
 }
