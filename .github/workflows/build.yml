@@ -33,7 +33,7 @@ jobs:
           setup-java_java-version: 25
 
       - name: Checkout PackConverter integration source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.PACK_CONVERTER_REPO }}
           ref: ${{ env.PACK_CONVERTER_REF }}
