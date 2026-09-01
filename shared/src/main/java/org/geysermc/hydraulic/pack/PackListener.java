@@ -360,8 +360,9 @@ public class PackListener {
     private void logSummary(PackPlan plan, List<PackResult> completed, int converted, int newlySkippedEmpty, List<String> deferred) {
         int detected = plan.reusable().size() + plan.cachedEmpty().size() + plan.toConvert().size();
         int skippedEmpty = plan.cachedEmpty().size() + newlySkippedEmpty;
-        LOGGER.info("Hydraulic: {} detected | {} reused | {} converted | {} skipped-empty | {} deferred",
-                detected, plan.reusable().size(), converted, skippedEmpty, deferred.size());
+        int failed = (int) completed.stream().filter(result -> result.outcome() == PackManager.PackCreationResult.FAILED).count();
+        LOGGER.info("Hydraulic: {} detected | {} reused | {} converted | {} skipped-empty | {} failed | {} deferred",
+                detected, plan.reusable().size(), converted, skippedEmpty, failed, deferred.size());
         List<PackResult> slowest = completed.stream().sorted(java.util.Comparator.comparingLong(PackResult::millis).reversed()).limit(2).toList();
         if (!slowest.isEmpty()) {
             LOGGER.info("Slowest: {}", slowest.stream().map(result -> result.modId() + " " + result.millis() + "ms (conversion)")

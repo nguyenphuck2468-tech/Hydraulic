@@ -219,7 +219,12 @@ final class PackReferencePruner {
         if (json.isJsonPrimitive() && json.getAsJsonPrimitive().isString()) {
             strings.add(json.getAsString());
         } else if (json.isJsonObject()) {
-            json.getAsJsonObject().asMap().values().forEach(value -> collectStrings(value, strings));
+            json.getAsJsonObject().entrySet().forEach(entry -> {
+                // Bedrock permits controller and animation identifiers as object
+                // keys, for example conditional animation_controller bindings.
+                strings.add(entry.getKey());
+                collectStrings(entry.getValue(), strings);
+            });
         } else if (json.isJsonArray()) {
             json.getAsJsonArray().forEach(value -> collectStrings(value, strings));
         }

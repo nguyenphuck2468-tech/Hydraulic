@@ -67,7 +67,7 @@ line such as:
 
 ```text
 Pack planning completed in ... ms [reuse=12, skipped-empty=32, conversion=0]
-Hydraulic: 44 detected | 12 reused | 0 converted | 32 skipped-empty | 0 deferred
+Hydraulic: 44 detected | 12 reused | 0 converted | 32 skipped-empty | 0 failed | 0 deferred
 ```
 
 `reuse` means the complete archive and fingerprint were verified;

@@ -13,6 +13,8 @@ public final class ConversionReport {
     private final Map<String, Map<String, String>> resolutions = new LinkedHashMap<>();
     private final List<String> validationWarnings = new java.util.ArrayList<>();
     private final Map<String, Long> timings = new LinkedHashMap<>();
+    private String status = "in-progress";
+    private String failure;
 
     public void fallback(String kind) {
         fallbacks.merge(kind, 1, Integer::sum);
@@ -49,8 +51,18 @@ public final class ConversionReport {
         timings.merge(stage, millis, Long::sum);
     }
 
+    public void status(String status) {
+        this.status = status;
+    }
+
+    public void failure(String failure) {
+        this.failure = failure;
+    }
+
     public JsonObject json(int blocks, int items, int entities, long archiveBytes) {
         JsonObject root = new JsonObject();
+        root.addProperty("status", status);
+        if (failure != null) root.addProperty("failure", failure);
         root.addProperty("blocks", blocks);
         root.addProperty("items", items);
         root.addProperty("entities", entities);

@@ -188,6 +188,8 @@ class PackArchiveValidatorTest {
     @Test
     void recordsAffectedIdsAndPhaseTimings() {
         ConversionReport report = new ConversionReport();
+        report.status("invalid");
+        report.failure("missing controller");
         report.outcome("entity-hitbox", "example:beast");
         report.resolution("entity-texture", "example:beast", "textures/entity/example/beast");
         report.validationWarnings(java.util.List.of("missing atlas texture textures/item_texture.json -> example:beast"));
@@ -197,6 +199,8 @@ class PackArchiveValidatorTest {
 
         var json = report.json(0, 0, 1, 789);
 
+        assertTrue(json.get("status").getAsString().equals("invalid"));
+        assertTrue(json.get("failure").getAsString().equals("missing controller"));
         assertTrue(json.getAsJsonObject("outcome_ids").getAsJsonArray("entity-hitbox").contains(new com.google.gson.JsonPrimitive("example:beast")));
         assertTrue(json.getAsJsonObject("asset_resolutions").getAsJsonObject("entity-texture").get("example:beast").getAsString().endsWith("/beast"));
         assertTrue(json.getAsJsonArray("validation_warnings").get(0).getAsString().startsWith("missing atlas texture"));

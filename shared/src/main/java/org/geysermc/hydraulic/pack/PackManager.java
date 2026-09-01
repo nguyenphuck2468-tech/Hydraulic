@@ -76,7 +76,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "26";
+    public static final String PACK_GENERATION_REVISION = "27";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -273,6 +273,8 @@ public class PackManager {
         LOGGER.info("Converting {} [blocks={}, items={}, entities={}, roots={}]", mod.id(), blockCount, itemCount, entityCount, mod.roots().size());
         if (profile == PackProfile.LITE && blockCount == 0 && itemCount == 0 && entityCount == 0) {
             cacheMetadataOnlyPack(packPath, fingerprint, mod.id());
+            report.status("metadata-only");
+            writeReport(mod.id(), report, blockCount, itemCount, entityCount, 0);
             LOGGER.info("Lite profile omitted resource-only pack for mod {}", mod.id());
             return PackCreationResult.METADATA_ONLY;
         }
@@ -338,7 +340,12 @@ public class PackManager {
 
         try {
             Files.deleteIfExists(stagedPack);
-            if (Thread.currentThread().isInterrupted()) return PackCreationResult.FAILED;
+            if (Thread.currentThread().isInterrupted()) {
+                report.status("cancelled");
+                report.failure("conversion interrupted before reading inputs");
+                writeReport(mod.id(), report, blockCount, itemCount, entityCount, 0);
+                return PackCreationResult.FAILED;
+            }
 
             for (final Path root : mod.roots()) {
                 for (SourceResourceValidator.Finding finding : SourceResourceValidator.validate(root)) {
@@ -350,6 +357,9 @@ public class PackManager {
             long rootsStartedAt = System.nanoTime();
             converter.convert();
             if (Thread.currentThread().isInterrupted()) {
+                report.status("cancelled");
+                report.failure("conversion interrupted after reading inputs");
+                writeReport(mod.id(), report, blockCount, itemCount, entityCount, sizeIfPresent(stagedPack));
                 discardStagedPack(stagedPack, mod.id());
                 return PackCreationResult.FAILED;
             }
@@ -361,6 +371,9 @@ public class PackManager {
             LOGGER.info("Conversion input {} combined {} root(s) in {} ms", mod.id(), mod.roots().size(),
                     (System.nanoTime() - rootsStartedAt) / 1_000_000);
         } catch (IOException | RuntimeException exception) {
+            report.status("failed");
+            report.failure(failureDetail(exception));
+            writeReport(mod.id(), report, blockCount, itemCount, entityCount, sizeIfPresent(stagedPack));
             discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to convert mod {} to pack", mod.id(), exception);
             return PackCreationResult.FAILED;
@@ -370,16 +383,24 @@ public class PackManager {
         try {
             converter.pack();
             if (Thread.currentThread().isInterrupted()) {
+                report.status("cancelled");
+                report.failure("conversion interrupted during packaging");
+                writeReport(mod.id(), report, blockCount, itemCount, entityCount, sizeIfPresent(stagedPack));
                 discardStagedPack(stagedPack, mod.id());
                 return PackCreationResult.FAILED;
             }
         } catch (IOException | RuntimeException exception) {
+            report.status("failed");
+            report.failure(failureDetail(exception));
+            writeReport(mod.id(), report, blockCount, itemCount, entityCount, sizeIfPresent(stagedPack));
             discardStagedPack(stagedPack, mod.id());
             LOGGER.error("Failed to export pack for mod {}", mod.id(), exception);
             return PackCreationResult.FAILED;
         }
         if (packager.metadataOnly()) {
             cacheMetadataOnlyPack(packPath, fingerprint, mod.id());
+            report.status("metadata-only");
+            writeReport(mod.id(), report, blockCount, itemCount, entityCount, 0);
             return PackCreationResult.METADATA_ONLY;
         }
         long packagedAt = System.nanoTime();
@@ -388,9 +409,22 @@ public class PackManager {
         if (created) {
             try {
                 PackArchiveValidator.Result validation = PackArchiveValidator.validate(stagedPack);
+                report.validationWarnings(validation.warnings());
                 if (!validation.valid()) {
+                    List<String> fatalFindings = validation.findings().stream()
+                            .filter(finding -> finding.severity() == PackArchiveValidator.Severity.ERROR)
+                            .map(PackArchiveValidator.Finding::message).toList();
+                    report.status("invalid");
+                    report.failure(fatalFindings.size() + " fatal validation finding(s)");
+                    report.outcome("validation-error", fatalFindings.size());
+                    for (int index = 0; index < fatalFindings.size(); index++) {
+                        report.resolution("validation-error", Integer.toString(index + 1), fatalFindings.get(index));
+                    }
+                    writeReport(mod.id(), report, blockCount, itemCount, entityCount, Files.size(stagedPack));
                     discardStagedPack(stagedPack, mod.id());
-                    LOGGER.error("Discarded invalid pack for {}: {}", mod.id(), validation.errors());
+                    int shown = Math.min(20, fatalFindings.size());
+                    LOGGER.error("Discarded invalid pack for {} [{} fatal finding(s); showing {}]: {}{}", mod.id(), fatalFindings.size(), shown,
+                            String.join("; ", fatalFindings.subList(0, shown)), fatalFindings.size() > shown ? " ..." : "");
                     return PackCreationResult.FAILED;
                 }
                 if (validation.metadataOnly()) {
@@ -399,7 +433,6 @@ public class PackManager {
                     return PackCreationResult.METADATA_ONLY;
                 }
                 if (!validation.warnings().isEmpty()) {
-                    report.validationWarnings(validation.warnings());
                     int shown = Math.min(20, validation.warnings().size());
                     LOGGER.warn("Pack validation warnings for {} [{} total; showing {}]: {}{}", mod.id(), validation.warnings().size(), shown,
                             String.join("; ", validation.warnings().subList(0, shown)), validation.warnings().size() > shown ? " ..." : "");
@@ -417,6 +450,7 @@ public class PackManager {
                 report.timing("package", packageMillis);
                 report.timing("validation", validationMillis);
                 report.timing("total", (validatedAt - startedAt) / 1_000_000);
+                report.status("created");
                 LOGGER.info("Conversion report {} [blocks={}, items={}, entities={}, fallback={}, files={}, {} ms, {} bytes]", mod.id(),
                         blockCount, itemCount, entityCount, report.fallbackSummary(), validation.files(),
                         (validatedAt - startedAt) / 1_000_000, archiveBytes);
@@ -424,24 +458,50 @@ public class PackManager {
                         assetsMillis, packageMillis, validationMillis);
                 publish(stagedPack, packPath);
                 PackListener.deleteMetadataOnlyMarker(packPath);
-                Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(mod.id() + ".json");
-                try {
-                    Files.createDirectories(reportPath.getParent());
-                    writeStringAtomically(reportPath, report.json(blockCount, itemCount, entityCount, archiveBytes).toString());
-                } catch (IOException exception) {
-                    LOGGER.warn("Could not write conversion report for {}", mod.id(), exception);
-                }
+                writeReport(mod.id(), report, blockCount, itemCount, entityCount, archiveBytes);
             } catch (IOException exception) {
+                report.status("failed");
+                report.failure(failureDetail(exception));
+                writeReport(mod.id(), report, blockCount, itemCount, entityCount, sizeIfPresent(stagedPack));
                 discardStagedPack(stagedPack, mod.id());
                 LOGGER.error("Discarded unreadable staged pack for {}", mod.id(), exception);
                 return PackCreationResult.FAILED;
             }
         }
-        return created ? PackCreationResult.CREATED : PackCreationResult.FAILED;
+        if (!created) {
+            report.status("failed");
+            report.failure("packager did not create a staged archive");
+            writeReport(mod.id(), report, blockCount, itemCount, entityCount, 0);
+            return PackCreationResult.FAILED;
+        }
+        return PackCreationResult.CREATED;
     }
 
     static Path stagedPackPath(Path packPath) {
         return packPath.resolveSibling(packPath.getFileName() + ".part");
+    }
+
+    private void writeReport(String modId, ConversionReport report, int blocks, int items, int entities, long archiveBytes) {
+        Path reportPath = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(modId + ".json");
+        try {
+            Files.createDirectories(reportPath.getParent());
+            writeStringAtomically(reportPath, report.json(blocks, items, entities, archiveBytes).toString());
+        } catch (IOException exception) {
+            LOGGER.warn("Could not write conversion report for {}", modId, exception);
+        }
+    }
+
+    private static long sizeIfPresent(Path path) {
+        try {
+            return Files.isRegularFile(path) ? Files.size(path) : 0;
+        } catch (IOException ignored) {
+            return 0;
+        }
+    }
+
+    private static String failureDetail(Throwable failure) {
+        String message = failure.getMessage();
+        return failure.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
     }
 
     static void publish(Path stagedPack, Path packPath) throws IOException {
@@ -520,6 +580,7 @@ public class PackManager {
         // JOML copy into Hydraulic.
         addCodeSource(classpath, "org.joml.Quaternionfc");
         addCodeSource(classpath, "org.joml.Matrix4fc");
+        addCodeSource(classpath, "com.google.common.collect.Maps");
         return new ReflectionInput(sourceJar, classpath, Files.isRegularFile(clientRuntime) ? clientRuntime : null);
     }
 

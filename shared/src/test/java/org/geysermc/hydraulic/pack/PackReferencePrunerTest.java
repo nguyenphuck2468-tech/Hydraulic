@@ -71,6 +71,27 @@ class PackReferencePrunerTest {
         assertFalse(entity.contains("textures/entity/b"));
     }
 
+    @Test
+    void retainsDefinitionsReferencedByConditionalObjectKeys() throws Exception {
+        write("entity/example.entity.json", """
+                {"minecraft:client_entity":{"description":{
+                  "animation_controllers":[{"controller.animation.example.used":"query.is_alive"}],
+                  "render_controllers":[{"controller.render.example.used":"query.is_alive"}]}}}
+                """);
+        write("animation_controllers/used.json", """
+                {"animation_controllers":{"controller.animation.example.used":{"states":{"default":{
+                  "animations":[{"animation.example.used":"query.is_moving"}]}}}}}
+                """);
+        write("render_controllers/used.json", "{\"render_controllers\":{\"controller.render.example.used\":{}}}");
+        write("animations/used.json", "{\"animations\":{\"animation.example.used\":{}}}");
+
+        PackReferencePruner.prune(root);
+
+        assertTrue(Files.exists(root.resolve("animation_controllers/used.json")));
+        assertTrue(Files.exists(root.resolve("render_controllers/used.json")));
+        assertTrue(Files.exists(root.resolve("animations/used.json")));
+    }
+
     private String geometry(String identifier) {
         return "{\"minecraft:geometry\":[{\"description\":{\"identifier\":\"" + identifier + "\"}}]}";
     }
