@@ -22,7 +22,7 @@ env:
   PACK_CONVERTER_REPO: nguyenphuck2468-tech/PackConverter
   # Keep Hydraulic artifacts reproducible. Update this SHA deliberately after
   # validating a new PackConverter integration revision.
-  PACK_CONVERTER_REF: e998ab250c4bdf151dcf0656697af9718ac6cea7
+  PACK_CONVERTER_REF: d7c0715e3d0fabf36d7b621a7bafeaed1350737c
 
 jobs:
   build:
