@@ -67,6 +67,16 @@ public class BowPackModule extends TexturePackModule<BowPackModule> {
         this.postProcess(this::postProcess);
     }
 
+    /**
+     * Reads Java-side bow override predicates to extract the pulling
+     * textures. The legacy {@link Model#overrides()} /
+     * {@link ItemOverride} / {@link ItemPredicate} types are still
+     * exposed by creative-api 1.13.6 but marked deprecated pending the
+     * upstream replacement (ItemModel-based read API is write-side only,
+     * so we cannot migrate here yet). Suppresses deprecation until
+     * creative-api 2.0 ships a non-deprecated read accessor.
+     */
+    @SuppressWarnings("deprecation")
     private void postProcess(@NotNull PackPostProcessContext<BowPackModule> context) {
         ResourcePack assets = context.javaResourcePack();
         BedrockResourcePack bedrockPack = context.bedrockResourcePack();
