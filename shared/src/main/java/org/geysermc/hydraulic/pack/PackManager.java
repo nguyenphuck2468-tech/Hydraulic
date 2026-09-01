@@ -76,7 +76,7 @@ public class PackManager {
      */
     // Bump whenever generated pack semantics change so a restart cannot reuse
     // an archive missing newly required files or bindings.
-    public static final String PACK_GENERATION_REVISION = "30";
+    public static final String PACK_GENERATION_REVISION = "31";
     public static final String PACK_GENERATION_MARKER = "hydraulic-generation.json";
 
     static final Set<String> IGNORED_MODS = Set.of(
@@ -602,6 +602,7 @@ public class PackManager {
         // JOML copy into Hydraulic.
         addCodeSource(classpath, "org.joml.Quaternionfc");
         addCodeSource(classpath, "org.joml.Matrix4fc");
+        addCodeSource(classpath, "com.mojang.serialization.Keyable");
         addCodeSource(classpath, "com.google.common.collect.Maps");
         addCodeSource(classpath, "it.unimi.dsi.fastutil.objects.ObjectList");
         return new ReflectionInput(sourceJar, classpath, Files.isRegularFile(clientRuntime) ? clientRuntime : null);
