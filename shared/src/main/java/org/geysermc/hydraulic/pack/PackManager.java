@@ -40,14 +40,16 @@ import team.unnamed.creative.model.Model;
 import team.unnamed.creative.serialize.minecraft.MinecraftResourcePackReader;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -57,6 +59,7 @@ import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -586,26 +589,62 @@ public class PackManager {
         }
     }
 
+    private final Map<String, List<Path>> reflectionClasspathCache = new ConcurrentHashMap<>();
+
     private ReflectionInput reflectionInput(ModInfo mod) {
         Path sourceJar = mod.sourceJar();
         if (sourceJar == null) return null;
-        List<Path> classpath = new ArrayList<>();
-        for (ModInfo installed : hydraulic.mods()) {
-            Path jar = installed.sourceJar();
-            if (jar != null) classpath.add(jar);
-        }
-        Arrays.stream(System.getProperty("java.class.path", "").split(java.io.File.pathSeparator))
-                .map(Path::of).filter(Files::exists).forEach(classpath::add);
-        // Minecraft exposes JOML through the launcher rather than java.class.path.
-        // The reflection loader is intentionally isolated, so pass that exact
-        // runtime location instead of bundling a second, potentially incompatible
-        // JOML copy into Hydraulic.
-        addCodeSource(classpath, "org.joml.Quaternionfc");
-        addCodeSource(classpath, "org.joml.Matrix4fc");
-        addCodeSource(classpath, "com.mojang.serialization.Keyable");
-        addCodeSource(classpath, "com.google.common.collect.Maps");
-        addCodeSource(classpath, "it.unimi.dsi.fastutil.objects.ObjectList");
+        List<Path> classpath = reflectionClasspathCache.computeIfAbsent(mod.id(), ignored -> {
+            List<Path> paths = new ArrayList<>();
+            // 1. Every mod's source JAR — covers fabric/forge/neoforge mod loader contents.
+            for (ModInfo installed : hydraulic.mods()) {
+                Path jar = installed.sourceJar();
+                if (jar != null) paths.add(jar);
+            }
+            // 2. Walk java.class.path (SystemClassLoader) — covers launcher-provided JARs.
+            Arrays.stream(System.getProperty("java.class.path", "").split(java.io.File.pathSeparator))
+                    .map(Path::of).filter(Files::exists).forEach(paths::add);
+            // 3. Walk every URLClassLoader reachable from the boot loader — covers
+            //    Fabric loader bundles, Bukkit plugin loaders, and other custom
+            //    loaders whose JARs are not exposed through java.class.path.
+            walkClassLoaderUrls(PackManager.class.getClassLoader(), paths);
+            // 4. Safety net for libraries the loader exposes through a different
+            //    mechanism (JOML via launcher classpath, fastutil via Fabric's
+            //    bundled-jar registry). These probes do not replace walk — they
+            //    only add anything the walk missed.
+            addCodeSource(paths, "org.joml.Quaternionfc");
+            addCodeSource(paths, "org.joml.Matrix4fc");
+            addCodeSource(paths, "com.mojang.serialization.Keyable");
+            addCodeSource(paths, "com.google.common.collect.Maps");
+            addCodeSource(paths, "it.unimi.dsi.fastutil.objects.ObjectList");
+            return paths;
+        });
         return new ReflectionInput(sourceJar, classpath, Files.isRegularFile(clientRuntime) ? clientRuntime : null);
+    }
+
+    /**
+     * Recursively collect every JAR/directory reachable from {@code loader}'s
+     * {@link URLClassLoader#getURLs()} output, then walk each parent loader.
+     * Stops at the platform (null) and bootstrap loaders. {@code loader}
+     * itself is not always a URLClassLoader (it can be the platform loader);
+     * non-URL loaders simply contribute their parent chain.
+     */
+    static void walkClassLoaderUrls(ClassLoader loader, List<Path> sink) {
+        if (loader == null) return;
+        if (loader instanceof URLClassLoader urlLoader) {
+            for (URL url : urlLoader.getURLs()) {
+                if (!"jar".equalsIgnoreCase(url.getProtocol()) && !"file".equalsIgnoreCase(url.getProtocol())) continue;
+                try {
+                    Path path = Path.of(url.toURI());
+                    if ((Files.isRegularFile(path) || Files.isDirectory(path)) && !sink.contains(path)) {
+                        sink.add(path);
+                    }
+                } catch (URISyntaxException | IllegalArgumentException exception) {
+                    LOGGER.debug("Skipping malformed classloader URL {}: {}", url, exception.getMessage());
+                }
+            }
+        }
+        walkClassLoaderUrls(loader.getParent(), sink);
     }
 
     static void addCodeSource(List<Path> classpath, String className) {
