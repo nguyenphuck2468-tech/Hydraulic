@@ -51,24 +51,33 @@ import java.util.zip.ZipFile;
 public class PackListener {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
-    private static final long STARTUP_CONVERSION_BUDGET_MILLIS = 35_000;
     private static final int CONVERSION_THREADS = Math.max(1, Math.min(2,
             (Runtime.getRuntime().availableProcessors() + 1) / 2));
     private final HydraulicImpl hydraulic;
     private final PackManager manager;
+    private final ConversionBudget budget;
     private final Map<String, CompletableFuture<PackResult>> conversions = new ConcurrentHashMap<>();
     private ExecutorService threadPool = newThreadPool();
 
     public PackListener(HydraulicImpl hydraulic, PackManager manager) {
+        this(hydraulic, manager, ConversionBudget.load(ConversionBudget.defaultConfigFile(
+                hydraulic.dataFolder(Constants.MOD_ID))));
+    }
+
+    PackListener(HydraulicImpl hydraulic, PackManager manager, ConversionBudget budget) {
         this.hydraulic = hydraulic;
         this.manager = manager;
+        this.budget = budget;
 
         hydraulic.registerServerStop(server -> {
             synchronized (this) {
                 threadPool.shutdownNow(); // Staged archives make interruption safe on server stop.
             }
         });
+    }
 
+    ConversionBudget budget() {
+        return budget;
     }
 
     @Subscribe(postOrder = PostOrder.LATE)
@@ -83,15 +92,15 @@ public class PackListener {
         }
         PackPlan plan;
         LOGGER.info("Planning Hydraulic packs with {} conversion worker(s) and a {} ms startup budget",
-                CONVERSION_THREADS, STARTUP_CONVERSION_BUDGET_MILLIS);
+                CONVERSION_THREADS, budget.totalMs());
         ExecutorService executor = executor();
         CompletableFuture<PackPlan> planning = CompletableFuture.supplyAsync(this::planPacks, executor);
         try {
-            plan = planning.get(STARTUP_CONVERSION_BUDGET_MILLIS, TimeUnit.MILLISECONDS);
+            plan = planning.get(budget.totalMs(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException exception) {
             planning.cancel(true);
             LOGGER.error("Skipped Hydraulic pack planning after {} ms to keep server startup below the watchdog limit",
-                    STARTUP_CONVERSION_BUDGET_MILLIS);
+                    budget.totalMs());
             return;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -123,6 +132,7 @@ public class PackListener {
         LOGGER.info("Found {} packs to convert!", packsToLoad.size());
 
         List<CompletableFuture<PackResult>> futures = new ArrayList<>();
+        List<PackFuture> packFutures = new ArrayList<>();
         for (PackRequest request : packsToLoad) {
             String conversionKey = request.mod().id() + ":" + request.fingerprint();
             CompletableFuture<PackResult> conversion = conversions.computeIfAbsent(conversionKey, ignored -> CompletableFuture.supplyAsync(() -> {
@@ -143,9 +153,14 @@ public class PackListener {
                 }
             });
             futures.add(conversion);
+            packFutures.add(new PackFuture(request.mod().id(), conversion));
         }
 
-        List<PackResult> completed = awaitCompleted(futures, remainingBudgetMillis(startedAt));
+        List<PackResult> perModResults = awaitPerMod(packFutures, remainingBudgetMillis(startedAt));
+        List<PackResult> completed = new ArrayList<>();
+        for (PackResult result : perModResults) {
+            if (result != null) completed.add(result);
+        }
         int registered = 0;
         int newlySkippedEmpty = 0;
         for (PackResult result : completed) {
@@ -158,14 +173,14 @@ public class PackListener {
         }
 
         List<String> unfinishedMods = new ArrayList<>();
-        for (int index = 0; index < futures.size(); index++) {
-            if (!futures.get(index).isDone()) {
-                unfinishedMods.add(packsToLoad.get(index).mod().id());
+        for (PackFuture pf : packFutures) {
+            if (!pf.future().isDone()) {
+                unfinishedMods.add(pf.modId());
             }
         }
         if (!unfinishedMods.isEmpty()) {
             LOGGER.error("Deferred registration of {} pack conversion(s) after {} ms to keep server startup below the watchdog limit: {}; workers may finish atomic archives for the next start",
-                    unfinishedMods.size(), STARTUP_CONVERSION_BUDGET_MILLIS, String.join(", ", unfinishedMods));
+                    unfinishedMods.size(), budget.totalMs(), String.join(", ", unfinishedMods));
         }
 
         LOGGER.info("Registered {} of {} converted packs in {}", registered, packsToLoad.size(),
@@ -242,8 +257,52 @@ public class PackListener {
         return List.copyOf(completed);
     }
 
-    private static long remainingBudgetMillis(long startedAt) {
-        return Math.max(0, STARTUP_CONVERSION_BUDGET_MILLIS
+    /**
+     * Waits for each future with its own per-mod ceiling, capped by the
+     * remaining total startup budget. A future that exceeds its ceiling is
+     * cancelled immediately so the remaining futures still have a chance.
+     *
+     * @param futures pack conversions paired with their owning mod id, in submission order
+     * @param totalRemainingMillis time left until the watchdog trips
+     * @return per-future outcome: {@code null} if the future was cancelled or did not
+     *         finish within its ceiling; otherwise the completed value
+     */
+    List<PackResult> awaitPerMod(List<PackFuture> futures, long totalRemainingMillis) {
+        List<PackResult> results = new ArrayList<>(futures.size());
+        long totalDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(totalRemainingMillis);
+        for (PackFuture pf : futures) {
+            long perModCeilingMillis = budget.ceilingFor(pf.modId());
+            long remainingGlobalMillis = TimeUnit.NANOSECONDS.toMillis(totalDeadline - System.nanoTime());
+            if (remainingGlobalMillis <= 0) {
+                pf.future().cancel(true);
+                LOGGER.warn("Cancelled pack conversion for {} — total startup budget exhausted", pf.modId());
+                results.add(null);
+                continue;
+            }
+            long timeoutMillis = Math.min(perModCeilingMillis, remainingGlobalMillis);
+            try {
+                results.add(pf.future().get(timeoutMillis, TimeUnit.MILLISECONDS));
+            } catch (TimeoutException exception) {
+                pf.future().cancel(true);
+                LOGGER.warn("Cancelled pack conversion for {} after {} ms (per-mod ceiling {} ms); "
+                                + "other mods continue with the remaining startup budget",
+                        pf.modId(), timeoutMillis, perModCeilingMillis);
+                results.add(null);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                pf.future().cancel(true);
+                results.add(null);
+                break;
+            } catch (ExecutionException | CancellationException exception) {
+                LOGGER.error("Pack conversion task failed before completion for {}", pf.modId(), exception);
+                results.add(null);
+            }
+        }
+        return results;
+    }
+
+    private long remainingBudgetMillis(long startedAt) {
+        return Math.max(0, budget.totalMs()
                 - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
     }
 
@@ -428,6 +487,9 @@ public class PackListener {
     }
 
     private record PackResult(String modId, Path packPath, PackManager.PackCreationResult outcome, long millis) {
+    }
+
+    private record PackFuture(String modId, CompletableFuture<PackResult> future) {
     }
 }
 
