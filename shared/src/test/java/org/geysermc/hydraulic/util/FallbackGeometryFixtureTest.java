@@ -25,7 +25,7 @@ class FallbackGeometryFixtureTest {
         var model = GeoUtil.fromShape(shape, "geometry.fixture.large", true);
         var geometry = model.geometry().getFirst();
 
-        assertEquals("bone_0", geometry.bones().get(1).parent());
+        assertEquals("hydraulic_hitbox_0", geometry.bones().get(1).parent());
         assertEquals(4.8f, geometry.description().visibleBoundsWidth());
         assertEquals(4.8f, geometry.description().visibleBoundsHeight());
     }

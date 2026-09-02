@@ -56,9 +56,9 @@ public class GeoUtil {
             float[] to = new float[] { (float) box.maxX * SCALE, (float) box.maxY * SCALE, (float) box.maxZ * SCALE };
 
             Bones bone = new Bones();
-            bone.name("bone_" + bones.size());
+            bone.name((groupBones ? "hydraulic_hitbox_" : "bone_") + bones.size());
             if (groupBones && !bones.isEmpty()) {
-                bone.parent("bone_0");
+                bone.parent("hydraulic_hitbox_0");
             }
             bone.pivot(new float[] { ELEMENT_OFFSET[0], ELEMENT_OFFSET[1], -ELEMENT_OFFSET[2] });
 

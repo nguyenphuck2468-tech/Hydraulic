@@ -596,8 +596,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
 
     /**
      * Gives every textured entity a pack-owned geometry when no converter can
-     * recover its client model. The recovered model always wins; this one-cube
-     * fallback follows the Java hitbox and never relies on a vanilla entity
+     * recover its client model. The recovered model always wins; this adaptive
+     * silhouette follows the Java hitbox and never relies on a vanilla entity
      * geometry being present on the Bedrock client.
      */
     private static void addHitboxGeometry(String namespace, String path, EntityDimensions dimensions, BedrockResourcePack pack) {

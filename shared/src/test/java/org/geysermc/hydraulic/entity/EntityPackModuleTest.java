@@ -1,13 +1,15 @@
 package org.geysermc.hydraulic.entity;
 
 import com.google.gson.JsonObject;
+import net.minecraft.world.phys.shapes.Shapes;
+import org.geysermc.hydraulic.util.GeoUtil;
+import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
+import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Bones;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Description;
-import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -105,6 +107,23 @@ class EntityPackModuleTest {
 
         assertEquals("HITBOX", property(profile, "kind").toString());
         assertTrue(((String) property(profile, "description")).contains("kind=hitbox"));
+    }
+
+    @Test
+    void marksMultiCubeFallbackGeometryAsHydraulicHitbox() {
+        var shape = Shapes.or(
+                Shapes.box(-0.5, 0.3, -0.5, 0.5, 0.8, 0.5),
+                Shapes.box(-0.25, 0.6, -0.8, 0.25, 1.0, -0.3),
+                Shapes.box(-0.45, 0, -0.45, -0.3, 0.35, -0.3),
+                Shapes.box(0.3, 0, -0.45, 0.45, 0.35, -0.3));
+        List<Bones> bones = GeoUtil.fromShape(shape, "geometry.example.fallback", true)
+                .geometry().getFirst().bones();
+
+        assertTrue(bones.size() > 1, "an adaptive hitbox may contain several cubes");
+        assertTrue(bones.stream().allMatch(bone -> bone.name().startsWith("hydraulic_hitbox_")));
+        assertTrue(bones.stream().skip(1).allMatch(bone -> "hydraulic_hitbox_0".equals(bone.parent())));
+        assertTrue(bones.stream().flatMap(bone -> bone.cubes().stream()).allMatch(cube -> cube.uv() == null));
+        assertTrue(bones.stream().allMatch(bone -> java.util.Arrays.equals(new float[]{8, 0, -8}, bone.pivot())));
     }
 
     @Test
