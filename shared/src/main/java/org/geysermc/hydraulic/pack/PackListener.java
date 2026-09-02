@@ -353,7 +353,8 @@ public class PackListener {
                     && PackManager.PACK_GENERATION_REVISION.equals(marker.get("revision").getAsString())
                     && marker.has("fingerprint") && fingerprint.equals(marker.get("fingerprint").getAsString())
                     && marker.has("outcome") && "metadata-only".equals(marker.get("outcome").getAsString());
-        } catch (IOException | RuntimeException ignored) {
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.debug("Failed to read metadata-only marker for cached pack {}", packPath, exception);
             return false;
         }
     }
@@ -383,7 +384,8 @@ public class PackListener {
         for (Path pack : packs) {
             try {
                 bytes += Files.size(pack);
-            } catch (IOException ignored) {
+            } catch (IOException exception) {
+                LOGGER.debug("Failed to read size of pack {}", pack, exception);
             }
         }
         LOGGER.info("Bedrock delivery plan: {} pack(s), {} bytes; client download/import/apply timing requires a real Bedrock session",

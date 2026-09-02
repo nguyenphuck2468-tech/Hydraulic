@@ -1,5 +1,8 @@
 package org.geysermc.hydraulic.pack;
 
+import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
+
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
@@ -21,6 +24,8 @@ import java.util.stream.Stream;
 
 /** Applies bounded, reference-safe image reductions without renaming assets. */
 final class PackTextureOptimizer {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     private PackTextureOptimizer() {
     }
 
@@ -40,7 +45,8 @@ final class PackTextureOptimizer {
                         ImageInfo info = inspect(path);
                         if (info != null) images.add(info);
                     });
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            LOGGER.debug("Failed to enumerate pack textures under {}", textures, exception);
             return Result.EMPTY;
         }
 
@@ -92,7 +98,8 @@ final class PackTextureOptimizer {
             } finally {
                 reader.dispose();
             }
-        } catch (IOException | RuntimeException ignored) {
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.debug("Failed to inspect texture {}", path, exception);
             return null;
         }
     }
@@ -138,7 +145,8 @@ final class PackTextureOptimizer {
             }
             replace(temporary, path);
             return new ResizeResult(true, false);
-        } catch (IOException | RuntimeException ignored) {
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.warn("Failed to resize texture {} to {}x{}", path, targetWidth, targetHeight, exception);
             try {
                 Files.deleteIfExists(temporary);
             } catch (IOException ignoredDelete) {

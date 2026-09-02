@@ -72,12 +72,14 @@ public final class EntityEventRegistrar {
                     if (description == null || !description.has("identifier")) continue;
                     String identifier = description.get("identifier").getAsString();
                     if (!identifier.isBlank() && PACK_BACKED_ENTITIES.add(identifier)) restored++;
-                } catch (RuntimeException ignored) {
+                } catch (RuntimeException exception) {
+                    LOGGER.debug("Failed to parse cached entity entry {}", entry.getName(), exception);
                     // Pack validation reports malformed JSON; one broken entry
                     // must not disable every valid cached entity.
                 }
             }
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            LOGGER.debug("Failed to read cached pack for restore: {}", packPath, exception);
             return restored;
         }
         return restored;
@@ -127,7 +129,8 @@ public final class EntityEventRegistrar {
                     LOGGER.info("Subscribed to Geyser entity events ahead of definition registration");
                     return;
                 }
-            } catch (Throwable ignored) {
+            } catch (Throwable exception) {
+                LOGGER.debug("Geyser api not ready yet; will retry", exception);
                 // Geyser not constructed yet - keep polling.
             }
 

@@ -1,7 +1,9 @@
 package org.geysermc.hydraulic.platform.mod;
 
+import com.mojang.logging.LogUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +18,7 @@ public record ModInfo(
     @Nullable Path iconPath,
     @NotNull Collection<Path> roots
 ) {
+    private static final Logger LOGGER = LogUtils.getLogger();
     @Nullable
     public Path resolveFile(String file) {
         for (final Path path : roots) {
@@ -41,7 +44,8 @@ public record ModInfo(
                     if (!uri.startsWith("jar:") || separator < 0) continue;
                     Path jar = Path.of(URI.create(uri.substring("jar:".length(), separator)));
                     if (Files.isRegularFile(jar)) return jar;
-                } catch (RuntimeException ignored) {
+                } catch (RuntimeException exception) {
+                    LOGGER.debug("Failed to resolve source jar URI for root {}", root, exception);
                     // Development directories have no source jar to reflect.
                 }
             }

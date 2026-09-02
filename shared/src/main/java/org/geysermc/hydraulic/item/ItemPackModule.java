@@ -2,6 +2,7 @@ package org.geysermc.hydraulic.item;
 
 import com.google.auto.service.AutoService;
 import com.google.common.collect.Lists;
+import com.mojang.logging.LogUtils;
 import net.kyori.adventure.key.Key;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.DefaultedRegistry;
@@ -38,6 +39,7 @@ import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
 import team.unnamed.creative.ResourcePack;
 import team.unnamed.creative.item.*;
 import team.unnamed.creative.item.property.*;
@@ -57,6 +59,7 @@ import java.util.regex.Pattern;
 
 @AutoService(PackModule.class)
 public class ItemPackModule extends TexturePackModule<ItemPackModule> {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final Pattern RAW_TEXTURE = Pattern.compile("(?:[a-z0-9_.-]+:)?(?:item|block|gui)/[a-z0-9_./-]+");
     private final List<Identifier> itemsWith2dIcon = new ArrayList<>();
     private final List<Identifier> handheldItems = new ArrayList<>();
@@ -364,7 +367,8 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 Key key = value.indexOf(':') >= 0 ? Key.key(value) : Key.key(item.getNamespace(), value);
                 for (var texture : assets.textures()) if (texture.key().equals(key)) return key;
             }
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.debug("Failed to scan raw item model for texture references: {}", file, exception);
             // A malformed raw item file is reported by Minecraft; it must not stop pack conversion.
         }
         return null;
@@ -385,7 +389,8 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 BufferedImage image = ImageIO.read(imagePath.toFile());
                 if (image == null) return base;
                 images.add(image);
-            } catch (Exception ignored) {
+            } catch (Exception exception) {
+                LOGGER.warn("Failed to read item texture layer {} for item {}", layer, item, exception);
                 return base;
             }
         }
@@ -404,7 +409,8 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             graphics.dispose();
             ImageIO.write(combined, "PNG", output.toFile());
             return new ItemTexture(outputFile.substring(0, outputFile.lastIndexOf('.')), null);
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.warn("Failed to write combined item texture {} for item {}", outputFile, item, exception);
             return base;
         }
     }
@@ -423,7 +429,8 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
             Files.createDirectories(target.getParent());
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
             return new ItemTexture(outputFile.substring(0, outputFile.lastIndexOf('.')), "assets/" + key.namespace() + "/textures/" + key.value());
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.warn("Failed to copy source texture {} for item key {}", source, key, exception);
             return null;
         }
     }

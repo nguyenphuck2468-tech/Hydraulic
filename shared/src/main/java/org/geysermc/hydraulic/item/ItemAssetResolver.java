@@ -3,10 +3,12 @@ package org.geysermc.hydraulic.item;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.logging.LogUtils;
 import net.kyori.adventure.key.Key;
 import net.minecraft.resources.Identifier;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.geysermc.hydraulic.util.IOUtil;
+import org.slf4j.Logger;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -20,6 +22,7 @@ import java.util.Set;
 
 /** Resolves ordinary JSON item models without assuming a mod or renderer framework. */
 final class ItemAssetResolver {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
     private ItemAssetResolver() {
     }
@@ -159,7 +162,8 @@ final class ItemAssetResolver {
         try {
             JsonElement parsed = JsonParser.parseString(IOUtil.readString(path, java.nio.charset.StandardCharsets.UTF_8, MAX_JSON_BYTES));
             return parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.debug("Failed to read or parse JSON asset {}", path, exception);
             return null;
         }
     }

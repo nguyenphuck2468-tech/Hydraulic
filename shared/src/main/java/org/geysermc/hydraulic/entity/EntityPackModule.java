@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityDimensions;
@@ -21,6 +22,7 @@ import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.Geometry;
 import org.geysermc.pack.bedrock.resource.models.entity.modelentity.geometry.Bones;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -57,6 +59,7 @@ import java.util.stream.Stream;
  */
 @AutoService(PackModule.class)
 public class EntityPackModule extends PackModule<EntityPackModule> {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final String ANIMATION_MAPPING_FILE = "entity-animations.json";
     private Map<String, AnimationRefs> configuredAnimations = Map.of();
     private Path configuredAnimationsPath;
@@ -689,7 +692,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                     .filter(java.util.Objects::nonNull)
                     .sorted(Comparator.comparing(TextureAsset::path))
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.debug("Failed to enumerate textures under {}", textures, exception);
             return List.of();
         }
     }
@@ -720,7 +724,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                         .map(candidate -> sourceTextureAsset(mod.namespace(), sourceRoot, candidate))
                         .filter(java.util.Objects::nonNull)
                         .forEach(textures::add);
-            } catch (Exception ignored) {
+            } catch (Exception exception) {
+                LOGGER.debug("Failed to enumerate source textures under {}", sourceRoot, exception);
                 // A single unreadable mod root should not stop its other assets.
             }
         }
@@ -744,11 +749,13 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                                 .map(path -> sourceGeometryAsset(namespace.getFileName().toString(), path))
                                 .filter(java.util.Objects::nonNull)
                                 .forEach(geometries::add);
-                    } catch (IOException ignored) {
+                    } catch (IOException exception) {
+                        LOGGER.debug("Failed to enumerate geometry files under {}", namespace, exception);
                         // A bad optional geometry must not hide the remaining assets in the mod.
                     }
                 });
-            } catch (IOException ignored) {
+            } catch (IOException exception) {
+                LOGGER.debug("Failed to enumerate namespaces under {}", assets, exception);
                 // A bad resource root is already isolated by the converter path.
             }
         }
@@ -761,7 +768,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             if (model == null || model.geometry() == null || model.geometry().isEmpty()) return null;
             String name = source.getFileName().toString();
             return new SourceGeometryAsset(namespace, source.toString(), name.substring(0, name.length() - ".geo.json".length()), model);
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.debug("Failed to parse geometry file {}", source, exception);
             return null;
         }
     }
@@ -844,7 +852,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
             Files.createDirectories(destination.getParent());
             Files.copy(best.source(), destination, StandardCopyOption.REPLACE_EXISTING);
             return new TextureMatch(best.outputPath(), true, best.description());
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.warn("Failed to copy source texture {} to pack output {}", best.source(), best.outputFile(), exception);
             return null;
         }
     }
@@ -939,7 +948,8 @@ public class EntityPackModule extends PackModule<EntityPackModule> {
                 for (String name : names) {
                     animations.addProperty(name, name);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception exception) {
+                LOGGER.debug("Failed to parse converted animation file {}", candidate.getKey(), exception);
                 // A malformed converted animation file must not break pack generation.
             }
         }

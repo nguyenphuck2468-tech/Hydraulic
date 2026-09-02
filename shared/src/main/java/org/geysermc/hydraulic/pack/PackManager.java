@@ -516,7 +516,8 @@ public class PackManager {
     private static long sizeIfPresent(Path path) {
         try {
             return Files.isRegularFile(path) ? Files.size(path) : 0;
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            LOGGER.debug("Could not size {} for the conversion report; reporting 0", path, exception);
             return 0;
         }
     }
@@ -558,7 +559,8 @@ public class PackManager {
         Path report = this.hydraulic.dataFolder(Constants.MOD_ID).resolve("reports").resolve(modId + ".json");
         try {
             return qualityFromReport(JsonParser.parseString(IOUtil.readString(report, StandardCharsets.UTF_8, 8 * 1024 * 1024)).getAsJsonObject());
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.debug("Could not read conversion report for {}; treating as empty quality summary", modId, exception);
             return Quality.EMPTY;
         }
     }
@@ -615,9 +617,12 @@ public class PackManager {
             URI location = type.getProtectionDomain().getCodeSource().getLocation().toURI();
             Path path = Path.of(location);
             if ((Files.isRegularFile(path) || Files.isDirectory(path)) && !classpath.contains(path)) classpath.add(path);
-        } catch (ClassNotFoundException | LinkageError | SecurityException | URISyntaxException ignored) {
+        } catch (ClassNotFoundException | LinkageError | SecurityException | URISyntaxException exception) {
             // The parser will emit its normal per-entity diagnostic if an
             // optional model-library dependency is genuinely unavailable.
+            // Logging here would only add noise — reflectionInput() intentionally
+            // probes for classes that may legitimately be absent on some loaders.
+            LOGGER.debug("Reflection classpath could not resolve {}; relying on per-entity diagnostics", className, exception);
         }
     }
 

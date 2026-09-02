@@ -5,10 +5,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import com.mojang.logging.LogUtils;
 import net.minecraft.util.GsonHelper;
 import org.geysermc.hydraulic.fabric.platform.HydraulicFabricBootstrap;
 import org.geysermc.hydraulic.platform.mod.ModInfo;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -26,6 +28,7 @@ import java.util.stream.Stream;
  * Utilities used to implement {@link HydraulicFabricBootstrap}.
  */
 public class FabricUtil {
+    private static final Logger LOGGER = LogUtils.getLogger();
     public static final int ICON_SIZE = 256;
 
     /**
@@ -55,7 +58,8 @@ public class FabricUtil {
         final JsonObject fmj;
         try (Reader reader = Files.newBufferedReader(fmjPath)) {
             fmj = GsonHelper.parse(reader);
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            LOGGER.debug("Failed to read fabric.mod.json at {}", fmjPath, exception);
             return;
         }
 
@@ -93,7 +97,8 @@ public class FabricUtil {
             final FileSystem fileSystem;
             try {
                 fileSystem = FileSystems.newFileSystem(innerPath);
-            } catch (IOException ignored) {
+            } catch (IOException exception) {
+                LOGGER.debug("Failed to open JiJ mod jar {}", innerPath, exception);
                 continue;
             }
             resolveJiJ(toCollection(fileSystem.getRootDirectories()), output);

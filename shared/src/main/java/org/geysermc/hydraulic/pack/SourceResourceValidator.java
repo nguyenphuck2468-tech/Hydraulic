@@ -1,7 +1,9 @@
 package org.geysermc.hydraulic.pack;
 
 import com.google.gson.JsonParser;
+import com.mojang.logging.LogUtils;
 import org.geysermc.hydraulic.util.IOUtil;
+import org.slf4j.Logger;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -14,6 +16,7 @@ import java.util.stream.Stream;
 
 /** Finds malformed source resources before conversion while leaving other assets runnable. */
 final class SourceResourceValidator {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int MAX_JSON_BYTES = 8 * 1024 * 1024;
     private static final Pattern LOCATION = Pattern.compile("line (\\d+) column (\\d+)");
 
@@ -28,7 +31,8 @@ final class SourceResourceValidator {
                     .filter(file -> Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS))
                     .filter(file -> file.getFileName().toString().endsWith(".json"))
                     .forEach(file -> validate(root, file, findings));
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.debug("Failed to enumerate source resources under {}", root, exception);
             // The converter already isolates unreadable roots. Diagnostics must
             // never become a second reason to abort the rest of the mod.
         }
