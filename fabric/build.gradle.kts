@@ -5,6 +5,14 @@ architectury {
     fabric()
 }
 
+repositories {
+    // fabric-loom adds its own repository set; make sure locally
+    // published PackConverter snapshots (via :converter:publishToMavenLocal
+    // on the fork) are visible to this subproject's runtime classpath.
+    mavenLocal()
+    mavenCentral()
+}
+
 val common: Configuration by configurations.creating
 val developmentFabric: Configuration = configurations.getByName("developmentFabric")
 val includeTransitive: Configuration = configurations.getByName("includeTransitive")
