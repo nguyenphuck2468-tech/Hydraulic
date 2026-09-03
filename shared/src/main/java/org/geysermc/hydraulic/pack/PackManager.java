@@ -40,6 +40,8 @@ import team.unnamed.creative.model.Model;
 import team.unnamed.creative.serialize.minecraft.MinecraftResourcePackReader;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
@@ -61,6 +63,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 /**
  * Manages packs within Hydraulic. Most of the pack conversion
@@ -69,6 +74,7 @@ import java.util.stream.Stream;
  */
 public class PackManager {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final com.google.gson.Gson PROVENANCE_GSON = new com.google.gson.Gson();
 
     /**
      * Increment when the generated Bedrock-pack contract changes. This keeps
@@ -451,6 +457,10 @@ public class PackManager {
                         (validatedAt - startedAt) / 1_000_000, archiveBytes);
                 LOGGER.info("Conversion timings {} [assets={} ms, package={} ms, validation={} ms]", mod.id(),
                         assetsMillis, packageMillis, validationMillis);
+                byte[] provenanceBody = PROVENANCE_GSON.toJson(PackProvenance.build(mod.id(), profile().id(),
+                        System.currentTimeMillis(), report)).getBytes(StandardCharsets.UTF_8);
+                embedEntryIntoZip(stagedPack, PackProvenance.EMBEDDED_PATH, provenanceBody);
+                archiveBytes = Files.size(stagedPack);
                 publish(stagedPack, packPath);
                 deleteInvalidPack(packPath);
                 PackListener.deleteMetadataOnlyMarker(packPath);
@@ -541,6 +551,46 @@ public class PackManager {
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException ignored) {
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /**
+     * Rewrite {@code archive} as a zip that contains every entry from the
+     * original plus {@link PackProvenance#EMBEDDED_PATH} carrying {@code body}.
+     * Uses a {@code .part} sibling and atomic-move (with REPLACE_EXISTING
+     * fallback matching {@link #writeStringAtomically}) so a crash mid-rewrite
+     * never leaves the original archive half-modified.
+     */
+    static void embedEntryIntoZip(Path archive, String entryPath, byte[] body) throws IOException {
+        Path temporary = archive.resolveSibling(archive.getFileName() + ".part");
+        try (InputStream source = Files.newInputStream(archive);
+             ZipInputStream reader = new ZipInputStream(source);
+             OutputStream sink = Files.newOutputStream(temporary);
+             ZipOutputStream writer = new ZipOutputStream(sink)) {
+            ZipEntry existing;
+            while ((existing = reader.getNextEntry()) != null) {
+                // Skip entries whose name matches the one we are about to embed.
+                // Re-emitting them at the end of the loop would produce a
+                // duplicate-entry ZipException; the trailing putNextEntry below
+                // overwrites the original byte-for-byte.
+                if (entryPath.equals(existing.getName())) continue;
+                ZipEntry copy = new ZipEntry(existing.getName());
+                copy.setTime(existing.getTime());
+                if (existing.getSize() >= 0) copy.setSize(existing.getSize());
+                writer.putNextEntry(copy);
+                reader.transferTo(writer);
+                writer.closeEntry();
+            }
+            ZipEntry provenance = new ZipEntry(entryPath);
+            provenance.setSize(body.length);
+            writer.putNextEntry(provenance);
+            writer.write(body);
+            writer.closeEntry();
+        }
+        try {
+            Files.move(temporary, archive, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException exception) {
+            Files.move(temporary, archive, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

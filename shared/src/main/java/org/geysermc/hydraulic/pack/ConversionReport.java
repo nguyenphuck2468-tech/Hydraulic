@@ -59,6 +59,16 @@ public final class ConversionReport {
         this.failure = failure;
     }
 
+    /** Read-only view over the (kind, ids) map, used by {@link PackProvenance}. */
+    public Map<String, List<String>> outcomeIdsView() {
+        return java.util.Collections.unmodifiableMap(outcomeIds);
+    }
+
+    /** Current status string ("in-progress", "created", "failed", ...). */
+    public String statusSnapshot() {
+        return status;
+    }
+
     public JsonObject json(int blocks, int items, int entities, long archiveBytes) {
         JsonObject root = new JsonObject();
         root.addProperty("status", status);
