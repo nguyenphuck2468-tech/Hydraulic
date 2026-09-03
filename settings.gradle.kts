@@ -2,7 +2,11 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 dependencyResolutionManagement {
     repositories {
-        // mavenLocal()
+        // Local Maven first — for builds against a forked PackConverter
+        // (see gradle/libs.versions.toml). Disable by overriding
+        // -Dhydraulic.useLocalMaven=false if a CI environment must hit
+        // repo.opencollab.dev even when mavenLocal() has a 3.5.8-SNAPSHOT.
+        mavenLocal()
         mavenCentral()
 
         gradlePluginPortal()

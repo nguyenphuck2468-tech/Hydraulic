@@ -3,7 +3,19 @@ mixin = "0.8.7"
 mixinextras = "0.5.4"
 geyser = "2.11.2-SNAPSHOT"
 auto-service = "1.1.1"
-pack-converter = "3.4.3-SNAPSHOT"
+# PackConverter 3.5.8-SNAPSHOT pinned to the personal fork that contains
+# the GĐ4.1 + GĐ4.2 fixes (path-traversal in TextureConverter + error
+# counting in ConverterPipeline). Without the pin, a fresh pull of
+# 3.4.3-SNAPSHOT from repo.opencollab.dev would silently revert both
+# fixes — the literal 3.4.3 coordinate is a "floating" snapshot, the
+# contents of the .jar under that name change every time GeyserMC CI
+# publishes a new build, and the Hydraulic build is non-reproducible.
+# To rebuild against a different PackConverter version, either
+#   - update the version here and `./gradlew :converter:publishToMavenLocal`
+#     on the PC fork then `./gradlew build` on the Hydraulic side, or
+#   - pass `-DpackConverterVersion=<coord>` on the command line and run
+#     the same two-step flow.
+pack-converter = "3.5.8-SNAPSHOT"
 indra = "4.0.0"
 shadow = "9.4.2"
 architectury-plugin = "3.5-SNAPSHOT"
