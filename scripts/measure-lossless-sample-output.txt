@@ -1,0 +1,83 @@
+﻿mod_id                                     size_kb   files  textures  models  entities  blocks  status
+----------------------------------------------------------------------------------------------------
+alexsmobs                                    21451       0         0       0         0       0
+architectury                                     0       0         0       0         0       0  [MISSING .mcpack]
+biomesoplenty                                20365       0         0       0         0       0
+c2me                                             0       0         0       0         0       0  [MISSING .mcpack]
+c2me-base                                        0       0         0       0         0       0  [MISSING .mcpack]
+c2me-client-uncapvd                              0       0         0       0         0       0  [MISSING .mcpack]
+c2me-fixes-chunkio-threading-issues              0       0         0       0         0       0  [MISSING .mcpack]
+c2me-fixes-general-threading-issues              0       0         0       0         0       0  [MISSING .mcpack]
+c2me-fixes-worldgen-threading-issues             0       0         0       0         0       0  [MISSING .mcpack]
+c2me-fixes-worldgen-vanilla-bugs                 0       0         0       0         0       0  [MISSING .mcpack]
+c2me-notickvd                                    0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-allocs                                 0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-chunkio                                0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-dfc                                    0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-math                                   0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-natives-math                           0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-scheduling                             0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-worldgen-general                       0       0         0       0         0       0  [MISSING .mcpack]
+c2me-opts-worldgen-vanilla                       0       0         0       0         0       0  [MISSING .mcpack]
+c2me-rewrites-chunkio                            0       0         0       0         0       0  [MISSING .mcpack]
+c2me-rewrites-chunk-serializer                   0       0         0       0         0       0  [MISSING .mcpack]
+c2me-rewrites-chunk-system                       0       0         0       0         0       0  [MISSING .mcpack]
+c2me-server-utils                                0       0         0       0         0       0  [MISSING .mcpack]
+c2me-threading-lighting                          0       0         0       0         0       0  [MISSING .mcpack]
+cloth-basic-math                                 0       0         0       0         0       0  [MISSING .mcpack]
+cloth-config                                    52       0         0       0         0       0
+codxlib                                         39       0         0       0         0       0
+entityculling                                   21       0         0       0         0       0
+fabric-language-kotlin                           0       0         0       0         0       0  [MISSING .mcpack]
+ferritecore                                      0       0         0       0         0       0  [MISSING .mcpack]
+forgeconfigapiport                              11       0         0       0         0       0
+glitchcore                                       0       0         0       0         0       0  [MISSING .mcpack]
+hydraulic                                       17       0         0       0         0       0
+lithium                                          0       0         0       0         0       0  [MISSING .mcpack]
+mixinsquared                                     0       0         0       0         0       0  [MISSING .mcpack]
+terrablender                                     6       0         0       0         0       0
+transition                                       0       0         0       0         0       0  [MISSING .mcpack]
+trender                                         45       0         0       0         0       0
+viabackwards                                     0       0         0       0         0       0  [MISSING .mcpack]
+viafabric                                       28       0         0       0         0       0
+viafabric-mc26-1                                 0       0         0       0         0       0  [MISSING .mcpack]
+viafabric-mc26-2                                 0       0         0       0         0       0  [MISSING .mcpack]
+viaversion                                       0       0         0       0         0       0  [MISSING .mcpack]
+vmp                                              0       0         0       0         0       0  [MISSING .mcpack]
+
+Total: 44 mods, 42034 KB, 0 files
+Mods without .mcpack: 34
+  - architectury
+  - c2me
+  - c2me-base
+  - c2me-client-uncapvd
+  - c2me-fixes-chunkio-threading-issues
+  - c2me-fixes-general-threading-issues
+  - c2me-fixes-worldgen-threading-issues
+  - c2me-fixes-worldgen-vanilla-bugs
+  - c2me-notickvd
+  - c2me-opts-allocs
+  - c2me-opts-chunkio
+  - c2me-opts-dfc
+  - c2me-opts-math
+  - c2me-opts-natives-math
+  - c2me-opts-scheduling
+  - c2me-opts-worldgen-general
+  - c2me-opts-worldgen-vanilla
+  - c2me-rewrites-chunkio
+  - c2me-rewrites-chunk-serializer
+  - c2me-rewrites-chunk-system
+  - c2me-server-utils
+  - c2me-threading-lighting
+  - cloth-basic-math
+  - fabric-language-kotlin
+  - ferritecore
+  - glitchcore
+  - lithium
+  - mixinsquared
+  - transition
+  - viabackwards
+  - viafabric-mc26-1
+  - viafabric-mc26-2
+  - viaversion
+  - vmp
