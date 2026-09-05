@@ -1,5 +1,6 @@
 package org.geysermc.hydraulic.pack.modules;
 
+import com.mojang.logging.LogUtils;
 import net.kyori.adventure.text.Component;
 import org.apache.commons.lang3.StringUtils;
 import org.geysermc.hydraulic.Constants;
@@ -12,6 +13,7 @@ import org.geysermc.pack.bedrock.resource.manifest.Modules;
 import org.geysermc.pack.converter.pipeline.*;
 import org.geysermc.pack.converter.type.base.PackManifestConverter;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 import team.unnamed.creative.ResourcePack;
 import team.unnamed.creative.metadata.pack.FormatVersion;
 import team.unnamed.creative.metadata.pack.PackFormat;
@@ -25,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 
 public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConverter<ModInfo, Manifest>, AssetCombiner<Manifest> {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private final ModInfo modInfo;
 
     public MetadataPackModule(ModInfo modInfo) {
@@ -71,7 +74,15 @@ public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConvert
                     pack.icon(stream.readAllBytes());
                 }
             }
-        } catch (IOException ignored) {
+        } catch (IOException exception) {
+            // GĐ5.5 audit: previously swallowed silently. The fallback path
+            // is bundled in the Hydraulic jar so the read should not
+            // realistically fail; if it ever does, the operator gets no
+            // signal and Bedrock clients see a pack with no icon. Log at
+            // warn so this stays visible without spamming debug for the
+            // common case.
+            LOGGER.warn("Failed to read pack icon for {} ({}); pack will be missing its icon",
+                    this.modInfo.id(), this.modInfo.iconPath(), exception);
         }
     }
 }
