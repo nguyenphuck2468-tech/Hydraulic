@@ -7,7 +7,7 @@
 
 ## TL;DR (10 dòng)
 
-1. **Core finding vẫn đúng 100%**: `hydraulic-fabric.jar` bundle `converter-3.4.3-SNAPSHOT` (chưa fix path-traversal) — verified bằng `unzip -p` + `grep` (8 commit Hyd force-pushed lên fork master).
+1. **Core finding vẫn đúng 100%**: `hydraulic-fabric.jar` bundle `converter-3.4.3-SNAPSHOT` (chưa fix path-traversal) — verified bằng `unzip -p` + `grep` (4 commit Hyd force-pushed lên fork master, see `02-pr-branch-status.md` row 12).
 2. **4 mod lỗi GĐ4.1 trong log 2026-09-07** [VERIFIED]: `alexsmobs, viabackwards, viafabric, viaversion` (không phải `viafabric-mc26-1`/`viafabric-mc26-2` như báo cáo cũ viết sai).
 3. **Đã sửa cả 2 bug P0** (GĐ4.1 path safety + GĐ4.2 error counting) — code có sẵn trong `nguyenphuck2468-tech/PackConverter` tại `gd5/pr-texture-and-errors-rebased`, **chưa merge upstream** vì GĐ4.3 (SNAPSHOT pin) chưa xong.
 4. **3 PR upstream mở** (1 supersede): PC #72 (GĐ4.1+4.2), Hyd #109 (GĐ3.7+3.9 26.2), Hyd #111 (GĐ4.5.1+4.5.2).
@@ -24,10 +24,10 @@
 |---|---|---|---|
 | F1 | `converter-3.4.3-SNAPSHOT` path traversal in production jar | **P0** | ✅ Verified 100% — fix ready trong `gd5/pr-texture-and-errors-rebased` (PR #72) |
 | F2 | CombineContext.error() not counted, "successfully" log sai | **P0** | ✅ Verified 100% — fix ready (cùng PR #72) |
-| F3 | `creative-api 1.13.6` thiếu `alexsmobs:icon` special_render_type | P1 | ⏸️ Theo dõi upstream `team.unnamed:creative-api` |
-| F4 | `biomesoplenty` log 1960 dòng `Could not find parent model` cho template_sign_rot_* | P2 (log noise) | ⏸️ Bug biomesoplenty upstream (mod không tương thích 26.2) |
-| F5 | 2 catch-block nuốt lỗi nuốt im lặng (GĐ5.5) | P2 | ✅ Fixed ở `gd5/catch-block-audit` |
-| F6 | GĐ4.5.3 async 5s budget mất pack P0 (claim từ báo cáo cũ) | **P0 unverified** | ⚠️ Không thấy trong log 2026-09-07 (log chạy build khác) |
+| F3 | `creative-api 1.13.6` thiếu `alexsmobs:icon` special_render_type | P1 | ⏸️ Theo dõi upstream `team.unnamed:creative-api` (see F5) |
+| F4 | `biomesoplenty` log spam từ `template_sign_rot_*` parent model missing | P2 (log noise) | ⏸️ Bug biomesoplenty upstream (mod không tương thích 26.2); `biomesoplenty` xuất hiện 3891 lần tổng, `Could not find parent model` 1960 dòng tổng log |
+| F5 | 2 catch-block nuốt lỗi im lặng (GĐ5.5) | P2 | ✅ Fixed ở `gd5/catch-block-audit` commit `1ff5a43` |
+| F6 | GĐ4.5.3 async 5s budget mất pack P0 (claim từ báo cáo cũ) | **P0 unverified** | ⚠️ Không thấy trong log 2026-09-07 (log chạy build khác); claim cần re-verify bằng log build có GĐ4.5.3 |
 | F7 | GĐ2.3 lossless vs pruned chưa đo | P3 | ⏸️ Cần 2 archive |
 | F8 | fabric-loom override `dependencyResolutionManagement` | P2 | ⏸️ Cần `loom { repositories { mavenLocal() } }` |
 

@@ -20,7 +20,7 @@
 | GĐ4.5.1 | Thread pool `max(2, cores-1)` + property override | Audit 2026-09-03 | ✅ Done (Hyd PR #111) |
 | GĐ4.5.2 | Bỏ `hydraulicUpdated` global flag | Audit 2026-09-03 | ✅ Done (Hyd PR #111) |
 | GĐ4.5.3 | Async convert inline budget 5s (REVERTED) | Audit 2026-09-03 | ❌ Superseded (mất 84% pack) |
-| GĐ4.5.5 | Sửa 2 catch-block nuốt lỗi (PackPackager, MetadataPackModule) | Audit 2026-09-04 | ✅ Done (Hyd branch `gd5/catch-block-audit`) |
+| GĐ4.5.5 | Sửa 2 catch-block nuốt lỗi (PackPackager, MetadataPackModule) | Audit 2026-09-04 | ✅ Done (Hyd branch `gd5/catch-block-audit`, commit `1ff5a43`) |
 | GĐ4.5.9 | Trace biomesoplenty parent model lặp log | Audit 2026-09-04 | ✅ Traced (P2 log noise, biomesoplenty bug) |
 | GĐ4.6 | Theo dõi creative-api/unnamed cho special_render_type | Audit 2026-09-03 | ⏸️ Theo dõi (F5) |
 | GĐ4.7 | Quy trình báo cáo cột "mergeable" | Audit 2026-09-04 | ✅ Done (memory note + báo cáo) |
@@ -35,7 +35,7 @@
 | FU3 | Maintainer `GeyserMC` review + merge [PR #111 (Hydraulic)](https://github.com/GeyserMC/Hydraulic/pull/111) (GĐ4.5.1+4.5.2, drop GĐ4.5.3) | GeyserMC | ASAP | ⏳ Open |
 | FU4 | Re-verify F3 (GĐ4.5.3 regression "84% pack mất") bằng log build CÓ GĐ4.5.3 — cần capture log mới | nguyenphuck2468-tech | 2026-09-14 | ⏸️ Chờ build |
 | FU5 | Debug GĐ4.3 fabric-loom override repos — cần `loom { repositories { mavenLocal() } }` hoặc JitPack | nguyenphuck2468-tech | 2026-09-21 | ⏸️ Blocked by upstream Hyd refactor |
-| FU6 | Xóa 14 PR closed cũ trên 2 fork (UI thủ công — API không cho) | nguyenphuck2468-tech | 2026-09-10 | ⏸️ Manual |
+| FU6 | Xóa 19 PR closed cũ trên 2 fork (UI thủ công — API không cho) | nguyenphuck2468-tech | 2026-09-10 | ⏸️ Manual |
 | FU7 | Đo GĐ2.3 lossless vs pruned — cần 2 archive (pre/post PR #5) | nguyenphuck2468-tech | Khi có pre-PR-5 archive | ⏸️ Chờ |
 | FU8 | Theo dõi `team.unnamed:creative-api` bump hỗ trợ `alexsmobs:icon` | upstream | TBD | ⏸️ Theo dõi |
 | FU9 | Submit `biomesoplenty` parent model issue lên `Biomes O' Plenty` GitHub (template_sign_rot_N không tồn tại 26.2) | Biomes O' Plenty | TBD | ⏸️ TBD |

@@ -8,8 +8,9 @@
 
 | branch | head_sha | upstream base | commits ahead |
 |---|---|---|---|
-| `master` | `9f89728` (= upstream master) | `9f89728` (GeyserMC/Hydraulic@9f89728) | 0 (synced) |
-| `gd5/final-fork-master` | local-only (Hyd) | `9f89728` | 4 (force-pushed GĐ4.5.1+4.5.2+GĐ5.5+GĐ5.9) |
+| `master` | `b59018a` (= `9f89728` + 4 commits: `be956b9` GĐ4.5.1 + `9f0b08b` GĐ4.5.2 + `1ff5a43` GĐ5.5 + `b59018a` GĐ5.9 docs) | `9f89728` (GeyserMC/Hydraulic@9f89728) | 4 (force-pushed) |
+| `gd5/final-fork-master` | (same as master at this point) | `9f89728` | 4 (same as master) |
+| `gd5/v2-audit-report` | `4e5968d` (this v2 audit report commit) | `9f89728` | 5 (master + 1) |
 
 ### PRs (last-checked 2026-09-07T09:22:53Z)
 
@@ -35,8 +36,8 @@
 
 | branch | head_sha | upstream base | commits ahead |
 |---|---|---|---|
-| `master` | `0e3a219` (= local) | `48cb61a` (GeyserMC/PackConverter@48cb61a) | 1 (GĐ4.1+4.2 squash) |
-| `gd5/final-fork-master` | local-only (PC) | `48cb61a` | 0 (same as master) |
+| `master` | `0e3a219` (= `48cb61a` + 1 commit: GĐ4.1+4.2 squash) | `48cb61a` (GeyserMC/PackConverter@48cb61a) | 1 (= origin/master) |
+| `gd5/final-fork-master` | (= master = `0e3a219`) | `48cb61a` | 1 (same as master) |
 
 ### PRs (last-checked 2026-09-07T09:22:53Z)
 
@@ -60,13 +61,13 @@
 | GeyserMC/Hydraulic | master | `9f89728` | 2026-09-07T09:22:53Z |
 | GeyserMC/PackConverter | master | `48cb61a` | 2026-09-07T09:22:53Z |
 
-**Note**: Tôi chưa mở PR upstream mới nào trong session này vì fork master đã chứa code sẵn sàng review. Khi maintainer upstream merge, audit sẽ được re-verify.
+**Note**: Trong session này tôi đã mở 3 PR upstream mới (PR #73, #113, #114) rồi đóng vì mở sai target (đã ghi nhận trong `03-risk-rollback.md` row R4). Code trong fork master đã sẵn sàng review — maintainer upstream có thể mở PR mới từ branch `gd5/final-fork-master` (Hyd) hoặc `master` (PC).
 
 ## Tóm tắt
 
 - **Total open PRs (cả 2 fork)**: 0 (tất cả đã closed/merged)
-- **Total open branches trên 2 fork**: 4 (master + gd5/final-fork-master × 2 repo)
-- **Closed PRs không thể xóa qua API** (GitHub không cho delete PR sau khi close, REST + GraphQL đều fail): 17 PR (Hyd 11 + PC 6)
+- **Total branches trên 2 fork**: 6 (master + gd5/final-fork-master + gd5/v2-audit-report × 2 repo)
+- **Closed PRs không thể xóa qua API** (GitHub không cho delete PR sau khi close, REST + GraphQL đều fail): 19 PR (Hyd 11 + PC 8)
 
 ## Re-verify plan
 

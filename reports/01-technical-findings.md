@@ -39,7 +39,7 @@ viaversion
 
 **Đính chính so với báo cáo cũ**:
 - Báo cáo cũ ghi `viafabric-mc26-1, viafabric-mc26-2` — sai. `viafabric-mc26-1` và `viafabric-mc26-2` là SUBMODULE của `viafabric`, không phải mod riêng trong log.
-- `alexsmobs` bị lỗi **read-only file system y hệt** nhưng **vắng mặt** khỏi danh sách cũ.
+- Báo cáo cũ GHI THIẾU `alexsmobs` (nó CÓ trong log ở dòng 33-35 với 3 lỗi `static.png`, `falconry_radius.png`, `advancement_background.png`); đã bổ sung vào danh sách 4 mod lỗi đúng.
 - 4 mod thật: `alexsmobs, viabackwards, viafabric, viaversion` (verified).
 - Timestamp thật `[15:45:16-15:45:24]`, không phải `[13:52:37]` như báo cáo cũ ghi.
 
@@ -77,10 +77,12 @@ Cần log build CÓ GĐ4.5.3 mới verify được claim "84% pack mất". Cho �
 ```
 
 **Đính chính so với báo cáo cũ**:
-- Báo cáo cũ nói "Lặp 2 lần do mỗi wood type có 2 model riêng biệt (wall_sign + hanging_sign)" — **SAI**. Thực tế có nhiều biến thể:
-  - Mỗi wood type có 4 model: `wall_sign`, `wall_hanging_sign`, `hanging_sign`, `attached_hanging_sign` (4 dòng)
-  - Mỗi model có 4 rotation: `rot_0..rot_3` (4 dòng)
-  - 4 × 4 = 16 dòng per wood type × ~12 wood types = ~192 dòng cho parent + thêm cho sign_rot variants
+- Báo cáo cũ nói "Lặp 2 lần do mỗi wood type có 2 model riêng biệt (wall_sign + hanging_sign)" — **SAI** (số liệu đếm chính xác cần verify lại)
+- Ước lượng cấu trúc (chưa verify từ log, cần grep biomesoplenty để đếm wood types + model variants):
+  - Mỗi wood type có 4 model variants: `wall_sign`, `wall_hanging_sign`, `hanging_sign`, `attached_hanging_sign`
+  - Mỗi model có 4 rotation: `rot_0..rot_3`
+  - Công thức: 4 model × 4 rotation × N wood types = 16N dòng
+  - Tổng log: 1960 dòng `Could not find parent model` (toàn bộ log, không chỉ biomesoplenty) → nếu 1960 chỉ từ biomesoplenty sign variants thì N ≈ 12 wood types
 - Root cause: `minecraft:block/template_sign_rot_N` không tồn tại trong vanilla 26.2 (sign format changed)
 - **Trace code**: `ModelStitcher.java:159` (PC) — `[INFERRED FROM code]`, log không chứa string "ModelStitcher"
 
