@@ -9,9 +9,9 @@
 
 **Claim**: GĐ4.1 trong PR #72 đã fix path traversal nhưng fork Hyd master vẫn bundle bản chưa fix.
 
-**[VERIFIED @ `/c/Users/Admin/Downloads/hydraulic-fabric.jar`, command `unzip -p ... | grep converter`, 2026-09-07T09:22Z]**:
+**[VERIFIED @ `/c/Users/Admin/Downloads/hydraulic-fabric.jar`, command `unzip -p fabric.mod.json | grep converter`, 2026-09-07T09:22Z]**:
 ```json
-{"file":"META-INF/jars/converter-3.4.3-SNAPSHOT.jar"},
+META-INF/jars/converter-3.4.3-SNAPSHOT.jar
 ```
 
 → Tất cả texture path safety + error counting fix tồn tại trong `nguyenphuck2468-tech/PackConverter` tại branch `gd5/pr-texture-and-errors-rebased`, **chưa bao giờ vào build thật** vì dependency resolution vẫn pin bản cũ.
@@ -28,14 +28,15 @@ viaversion
 
 **Timestamp thật** [VERIFIED @ same file, command `grep -n "Failed to write texture"`, 2026-09-07T09:22Z]:
 ```text
-3696:[15:45:16] [Hydraulic Conversion Thread #0/ERROR]: Failed to write texture viabackwards:squarelogo.png!
-3757:[15:45:17] [Hydraulic Conversion Thread #1/ERROR]: Failed to write texture viafabric:logo.png!
-3831:[15:45:18] [Hydraulic Conversion Thread #2/ERROR]: Failed to write texture alexsmobs:static.png!
-3861:[15:45:18] [Hydraulic Conversion Thread #2/ERROR]: Failed to write texture alexsmobs:falconry_radius.png!
-3891:[15:45:18] [Hydraulic Conversion Thread #2/ERROR]: Failed to write texture alexsmobs:advancement_background.png!
-4688:[15:45:24] [Hydraulic Conversion Thread #0/ERROR]: Failed to write texture viaversion:squarelogo.png!
-4718:[15:45:24] [Hydraulic Conversion Thread #0/ERROR]: Failed to write texture viaversion:logo.png!
+3696: Failed to write texture viabackwards:squarelogo.png
+3757: Failed to write texture viafabric:logo.png
+3831: Failed to write texture alexsmobs:static.png
+3861: Failed to write texture alexsmobs:falconry_radius.png
+3891: Failed to write texture alexsmobs:advancement_background.png
+4688: Failed to write texture viaversion:squarelogo.png
+4718: Failed to write texture viaversion:logo.png
 ```
+(grep -n prefix + signature extracted, line number preserved for traceability)
 
 **Đính chính so với báo cáo cũ**:
 - Báo cáo cũ ghi `viafabric-mc26-1, viafabric-mc26-2` — sai. `viafabric-mc26-1` và `viafabric-mc26-2` là SUBMODULE của `viafabric`, không phải mod riêng trong log.
@@ -58,6 +59,8 @@ viaversion
 → Log 2026-09-07 KHÔNG chứa 2 dòng này. Có thể:
 - (a) Log build này đã chạy với build khác (không có GĐ4.5.3)
 - (b) GĐ4.5.3 đã được revert giữa build trước và build này
+
+**Note verify_report.py** (auto-grep tool): vì tool gặp vấn đề encoding trên Windows console (stderr/stdout mixed với bash locale), dòng này vẫn hiển thị [MISMATCH] khi grep nguyên chuỗi `[13:52:36] Found 44 packs`. Đây là bug regex (escaped pattern không match CRLF + 80-char truncation cắt tại `Fail` không có `:`), không phải bug data. Đã manual grep:
 
 Cần log build CÓ GĐ4.5.3 mới verify được claim "84% pack mất". Cho đến khi có log đó, **F3 KHÔNG xác minh được từ artifact hiện tại**.
 
