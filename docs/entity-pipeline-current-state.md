@@ -59,3 +59,11 @@ Current [Microsoft block geometry guidance](https://learn.microsoft.com/en-us/mi
 [VERIFIED: source inspection and Git/GitHub reads] Repository structure, absence of live mob pipeline, PR history and issue cause above.
 
 [NOT VERIFIED] Original issue world reproduction, Bedrock chunk render recovery, entity runtime, two actual mod JAR conversion results, golden outputs, server integration and success-rate metrics. Java 25 is installed locally. Tests/build are separate gates; no runtime completion is claimed here.
+
+## Supplied server evidence (follow-up)
+
+Before the files became unavailable during this session, direct reads verified:
+- `latest-2026-09-07.log` lines 1-9: Fabric 0.19.3, Minecraft 26.2, alexsmobs 2.1.6, biomesoplenty 26.2.0.0.27.
+- `archive-2026-09-07T154615+0700.tar.gz`: SHA-256 `741e53ea59f720a6189595f91c49ddd927c6ede751a1f4d2b8e5f0d1611743f5`, 43,376,818 bytes, 55 entries, zero JAR files, no mods directory. It contains Hydraulic cache/materials and generated mcpacks including alexsmobs.mcpack.
+
+The user requires exact original server JARs, no downloaded replacement mods, and mod names only in tests/fixtures. The public source examples above describe those pinned historical sources only; they are NOT accepted fixtures or evidence of how the server's alexsmobs 2.1.6 builds its models. The generated mcpack cannot establish the original Java model/renderer format or dependency classpath. Exact JAR location has been requested. No fixture has been invented from a filename, version guess, or downloaded mod.
