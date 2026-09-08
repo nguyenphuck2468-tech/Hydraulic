@@ -22,7 +22,14 @@ allprojects {
     }
 
     repositories {
-        // mavenLocal()
+        // Build the exact fork commit pinned in CI before building Hydraulic.
+        // Exclusive resolution prevents substituting an unrelated remote snapshot.
+        exclusiveContent {
+            forRepository { mavenLocal() }
+            filter {
+                includeVersionByRegex("org\\.geysermc\\.pack", ".*", "3\\.5\\.2-SNAPSHOT")
+            }
+        }
         mavenCentral()
 
         // Geyser, Floodgate, Cumulus etc.

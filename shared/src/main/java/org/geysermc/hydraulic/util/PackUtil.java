@@ -23,6 +23,8 @@ import java.util.stream.Stream;
  */
 public class PackUtil {
     protected static final Logger LOGGER = LogUtils.getLogger();
+    // Bump when output compatibility changes even if every mod JAR is unchanged.
+    private static final String PACK_GENERATION = "hydraulic:block-bounds-v1:";
 
     public static String getTextureName(@NotNull String modelName) {
         // TODO Sometimes things end up in the minecraft namespace when they shouldn't.
@@ -65,6 +67,6 @@ public class PackUtil {
                 }
             });
         }
-        return UUID.nameUUIDFromBytes(hos.hash().asBytes());
+        return UUID.nameUUIDFromBytes((PACK_GENERATION + hos.hash()).getBytes(StandardCharsets.UTF_8));
     }
 }
