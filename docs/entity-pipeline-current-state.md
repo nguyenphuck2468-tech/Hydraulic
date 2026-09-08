@@ -67,3 +67,24 @@ Before the files became unavailable during this session, direct reads verified:
 - `archive-2026-09-07T154615+0700.tar.gz`: SHA-256 `741e53ea59f720a6189595f91c49ddd927c6ede751a1f4d2b8e5f0d1611743f5`, 43,376,818 bytes, 55 entries, zero JAR files, no mods directory. It contains Hydraulic cache/materials and generated mcpacks including alexsmobs.mcpack.
 
 The user requires exact original server JARs, no downloaded replacement mods, and mod names only in tests/fixtures. The public source examples above describe those pinned historical sources only; they are NOT accepted fixtures or evidence of how the server's alexsmobs 2.1.6 builds its models. The generated mcpack cannot establish the original Java model/renderer format or dependency classpath. Exact JAR location has been requested. No fixture has been invented from a filename, version guess, or downloaded mod.
+
+## Newly supplied original model JAR and bounded probe
+
+The user subsequently supplied `alexsmobs-2.1.11-fabric+26.2.jar` in Downloads. It was copied to the task's work/fixtures directory before further inspection. SHA-256: `a548655daf4b8336cbc43544d5eae6e0883217afbe7a5f62c0587c4b62f2484d` (27,802,705 bytes).
+
+Its actual fabric.mod.json identifies **Alex's Mobs Continued 2.1.11**, Minecraft 26.2, Java >=25, Fabric Loader >=0.18.4, Fabric API >=0.155.2+26.2 and codxlib >=1.6.0. This is the newly accepted fixture, distinct from 2.1.6 in the earlier server log. The source contact is https://github.com/Codx-org/Alexs-Mobs-Updated-Ported and the JAR declares LGPL-3.0, with embedded license/notice files.
+
+Direct ZIP inventory found 124 classes matching `client/model/Model*.class`, zero geometry JSON files in `.geo.json`/`geo/` paths, and zero animation JSON files under `animations/`. javap verifies that ModelBaldEagle extends the bundled Citadel AdvancedEntityModel, exposing getAllParts/parts and Java setupAnim. Its renderer uses Java texture selection. These observations replace the historical public-source examples as evidence about the chosen fixture.
+
+A separate Java 25 diagnostic process was launched with a 20-second kill limit, the exact supplied JAR and the resolved Hydraulic 26.2 compile/client classpath. ModelBaldEagle's constructor succeeded; getAllParts returned **20 parts with 18 cubes**. The probe read actual names and pivots (for example root (0,24,0), body (0,-9.3,-2)). This verifies reflective access to this one model's static tree; it does **not** verify Bedrock coordinates, UVs, animation, entity binding, or a production isolated EntityConverter. No prototype was injected into the running server.
+
+The embedded renderer boxes expose per-face quads/vertex UVs; recovering only the last part-level texture offset would lose cube-specific UV information. Zero-thickness planes are present in real model bytecode and must not be silently removed. The former reflection parser on the historical branch needs review for both issues before reuse.
+
+The supplied Downloads currently has no codxlib dependency JAR or second mod JAR. These were requested for the required exact-mod headless/two-mod gates. No replacement mods have been downloaded. One model probe does not establish that the entire mod can be loaded or every model can be constructed.
+
+## Delivered, separate block-containment changes
+
+- PackConverter PR #7: https://github.com/nguyenphuck2468-tech/PackConverter/pull/7 , commit `ff3d22e484abf7551ca0f05be5e35737f4faf1dc`: 15 converter tests passed on JVM 25; both GitHub build checks passed. Includes cause-level regression and golden output, not an exact Ad Astra-world replay.
+- Hydraulic PR #8: https://github.com/nguyenphuck2468-tech/Hydraulic/pull/8 , commit `546d6ab3482637f12745dbe9a1d185b4cf2139f0`: exact converter pin, generation-aware cache identity; two cache tests and Fabric build passed locally on Java 25, both GitHub build checks passed. Nested converter entry comparison confirmed unchanged original entries and only Loom's added fabric.mod.json.
+
+These changes contain the known block geometry failure class. They do not constitute completion of the entity/mob converter, proxy, animation, sound, server-headless or real-client visual gates.

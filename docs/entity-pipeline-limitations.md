@@ -30,3 +30,7 @@ Use the exact JARs from the user's server archive; record SHA-256, actual loader
 ## Manual release gate
 
 [ASSUMED / CHUA VERIFY] Actual Bedrock client appearance, chunk rendering, animation timing, sound triggering, riding, interactions and reload/join behavior require a real Bedrock client. No client is available for this task. Automated schema, golden, unit and headless checks do not upgrade this gate to VERIFIED. A person with a real Bedrock client must perform and record visual/runtime QA before release.
+
+## Fixture update
+
+The user later supplied Alex's Mobs Continued 2.1.11 for 26.2 (SHA-256 `a548655daf4b8336cbc43544d5eae6e0883217afbe7a5f62c0587c4b62f2484d`). One bounded diagnostic process successfully read 20 parts/18 cubes from ModelBaldEagle using the exact JAR and resolved 26.2 classpath. That success does not establish full mod startup or justify guessing missing renderer/UV/animation semantics. codxlib >=1.6.0 and a second original mod JAR are still required for the requested runtime/two-mod verification. See entity-pipeline-current-state.md for the exact evidence and separate block-containment PRs.
