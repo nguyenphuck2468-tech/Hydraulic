@@ -80,7 +80,7 @@ A separate Java 25 diagnostic process was launched with a 20-second kill limit, 
 
 The embedded renderer boxes expose per-face quads/vertex UVs; recovering only the last part-level texture offset would lose cube-specific UV information. Zero-thickness planes are present in real model bytecode and must not be silently removed. The former reflection parser on the historical branch needs review for both issues before reuse.
 
-The supplied Downloads currently has no codxlib dependency JAR or second mod JAR. These were requested for the required exact-mod headless/two-mod gates. No replacement mods have been downloaded. One model probe does not establish that the entire mod can be loaded or every model can be constructed.
+At that checkpoint, the supplied Downloads had no codxlib dependency JAR or second mod JAR. Both have since been supplied (see the 2026-09-09 update below). No replacement mods have been downloaded. One model probe does not establish that the entire mod can be loaded or every model can be constructed.
 
 ## Delivered, separate block-containment changes
 
@@ -88,3 +88,15 @@ The supplied Downloads currently has no codxlib dependency JAR or second mod JAR
 - Hydraulic PR #8: https://github.com/nguyenphuck2468-tech/Hydraulic/pull/8 , commit `546d6ab3482637f12745dbe9a1d185b4cf2139f0`: exact converter pin, generation-aware cache identity; two cache tests and Fabric build passed locally on Java 25, both GitHub build checks passed. Nested converter entry comparison confirmed unchanged original entries and only Loom's added fabric.mod.json.
 
 These changes contain the known block geometry failure class. They do not constitute completion of the entity/mob converter, proxy, animation, sound, server-headless or real-client visual gates.
+
+## 2026-09-09: supplied dependencies and static geometry implementation
+
+[VERIFIED: direct ZIP metadata and SHA-256] All five original JARs are present: Alex's Mobs Continued 2.1.11, CodxLib 1.6.0, Mutant Monsters 26.2.2, PuzzlesLib 26.2.3 and Forge Config API Port 26.2.1. Their metadata targets Minecraft 26.2. Mutant Monsters/PuzzlesLib require Fabric API >=0.156.0 and Loader >=0.19.0; the existing resolved Hydraulic runtime uses API 0.158.0+26.2 and Loader 0.19.3. Metadata compatibility is not a server-start result.
+
+[VERIFIED: javap of the supplied Mutant Monsters JAR] MutantCreeperModel uses Minecraft ModelPart and `createBodyLayer(CubeDeformation)` returning LayerDefinition. It is not a Citadel getAllParts tree or GeckoLib JSON. CodxLib and the second mod are no longer missing; successful conversion of the second representation requires an additional reader.
+
+[VERIFIED: local Java 25, 32 tests, zero failures/skips] [PackConverter PR #9](https://github.com/nguyenphuck2468-tech/PackConverter/pull/9) adds an explicit EntityConverter API. Its worker converts the actual Bald Eagle model to a checked-in 20-bone/18-cube golden with per-cube/per-face vertex UVs, zero-thickness planes, hierarchy and the constructor's 1.1 hood scale. Coordinate tests follow the composed Java/Bedrock codec convention. Tests also verify a timed-out busy-loop worker PID is dead, another conversion can succeed concurrently, excessive output is killed, and failed conversion preserves an existing file. The second-JAR test verifies explicit unsupported-layout failure, not successful Mutant Monsters geometry conversion.
+
+[VERIFIED: PackConverter PR #8] Path containment is shared by textures and the new explicit geometry API. Neither change applies block-size/overlap limits to entity geometry or restores PR #5 registration mechanisms. Exact fixture hashes, reproduction command, output license and technical limits are documented in PackConverter's `docs/entity-static-geometry.md`.
+
+[NOT VERIFIED / NOT IMPLEMENTED] This API is not wired into Hydraulic's PackManager or Geyser entity registration. No successful two-mod conversion gate, complete official-schema gate, headless server integration, per-mob success metric, animation/sound conversion or Bedrock visual QA is claimed. This documentation update does not change the converter dependency pin or the deployed server behavior.
