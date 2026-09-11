@@ -22,7 +22,11 @@ allprojects {
     }
 
     repositories {
-        // mavenLocal()
+        // CI builds the exact commit in gradle/pack-converter.ref before Hydraulic.
+        exclusiveContent {
+            forRepository { mavenLocal() }
+            filter { includeGroup("org.geysermc.pack") }
+        }
         mavenCentral()
 
         // Geyser, Floodgate, Cumulus etc.

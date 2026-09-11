@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -23,6 +24,15 @@ import java.util.stream.Stream;
  */
 public class PackUtil {
     protected static final Logger LOGGER = LogUtils.getLogger();
+
+    public static UUID withEntityFingerprints(UUID rootsUUID, List<String> fingerprints) {
+        if (fingerprints.isEmpty()) return rootsUUID;
+        // PackListener compares the pack manifest UUID before deciding whether to package.
+        // A separate entity cache would leave an old .mcpack reusable after a binding/JAR change.
+        // SHA-256 fingerprints are fixed length, sorted so YAML entry order is immaterial.
+        return UUID.nameUUIDFromBytes((rootsUUID + ":entities-v1:" + String.join("", fingerprints.stream().sorted().toList()))
+                .getBytes(StandardCharsets.UTF_8));
+    }
 
     public static String getTextureName(@NotNull String modelName) {
         // TODO Sometimes things end up in the minecraft namespace when they shouldn't.

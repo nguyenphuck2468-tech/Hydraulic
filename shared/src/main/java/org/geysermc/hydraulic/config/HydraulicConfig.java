@@ -7,6 +7,11 @@ import java.util.List;
 
 @ConfigSerializable
 public interface HydraulicConfig {
+    @Comment("Explicit entity model bindings. Absolute runtimeClasspath files are supplied by the operator; no class discovery.")
+    default List<EntityBinding> entityBindings() {
+        return List.of();
+    }
+
     @Comment("Mods that should be ignored")
     default List<String> ignoredMods() {
         return List.of("this-example-mod-id-should-be-ignored",
