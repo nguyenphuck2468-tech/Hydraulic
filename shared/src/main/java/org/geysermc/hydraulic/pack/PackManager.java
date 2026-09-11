@@ -36,12 +36,15 @@ import team.unnamed.creative.serialize.minecraft.MinecraftResourcePackReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.UUID;
+import org.geysermc.hydraulic.util.PackUtil;
 import java.util.stream.Stream;
 
 /**
@@ -78,6 +81,7 @@ public class PackManager {
 
     private List<ConverterPipeline<?, ?>> packConverters;
     private ModelStitcher.Provider modelProvider;
+    private EntityPackListener entities;
 
     public PackManager(HydraulicImpl hydraulic) {
         this.hydraulic = hydraulic;
@@ -88,6 +92,7 @@ public class PackManager {
      * Initializes the pack manager.
      */
     public void initialize() {
+        initializeEntities();
         initializeModLookups();
 
         final Collection<ModInfo> mods = this.hydraulic.mods();
@@ -151,6 +156,24 @@ public class PackManager {
         GeyserApi.api().eventBus().register(this.hydraulic, new PackListener(this.hydraulic, this));
     }
 
+    // Called at SERVER_STARTING, before Geyser's SERVER_STARTED initialization and entity event.
+    // This handler is independent of PackListener, whose resource-pack event runs later.
+    void initializeEntities() {
+        entities = new EntityPackListener(hydraulic.getConfig().entityBindings(),
+                hydraulic.mods().stream().filter(mod -> !shouldIgnoreMod(mod)).toList(),
+                mod -> hydraulic.modStorage(mod).pack(), hydraulic.dataFolder(Constants.MOD_ID).resolve("cache/entity-worker"),
+                message -> LOGGER.error("[Hydraulic][entity] {}", message));
+        GeyserApi.api().eventBus().register(hydraulic, entities);
+    }
+
+    public UUID wantedPackUUID(ModInfo mod) {
+        return entities == null ? PackUtil.getModUUID(mod.roots()) : entities.wantedUUID(mod);
+    }
+
+    public boolean entityPackNeedsPackaging(ModInfo mod) {
+        return entities != null && entities.needsPackaging(mod);
+    }
+
     /**
      * Creates the pack for the given mod.
      *
@@ -160,18 +183,47 @@ public class PackManager {
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     boolean createPack(@NotNull ModInfo mod, @NotNull Path packPath) {
+        Path staged;
+        try {
+            Files.createDirectories(packPath.toAbsolutePath().getParent());
+            staged = Files.createTempFile(packPath.toAbsolutePath().getParent(), "hydraulic-", ".part");
+            Files.delete(staged);
+        } catch (IOException failure) {
+            LOGGER.error("Failed to stage pack for mod {}", mod.id(), failure);
+            return false;
+        }
+        try {
+            return createStagedPack(mod, staged, packPath);
+        } finally {
+            try {
+                Files.deleteIfExists(staged);
+                // This directory belongs to the unique sibling staging file allocated above.
+                // Files.walk does not follow symbolic links; never traverse an external target.
+                Path scratch = staged.resolveSibling(staged.getFileName() + "_mcpack");
+                if (Files.exists(scratch, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    try (var files = Files.walk(scratch)) {
+                        for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
+                    }
+                }
+            }
+            catch (IOException failure) { LOGGER.warn("Failed to remove staging file {}", staged, failure); }
+        }
+    }
+
+    private boolean createStagedPack(ModInfo mod, Path staged, Path packPath) {
         List<ConverterPipeline<?, ?>> pipelines = new ArrayList<>(packConverters);
-        pipelines.add(AssetConverters.create(new MetadataPackModule(mod)));
+        pipelines.add(AssetConverters.create(new MetadataPackModule(mod,
+                entities == null ? PackUtil.getModUUID(mod.roots()) : entities.outputUUID(mod))));
 
         PackConverter converter = new PackConverter()
                 .packName(mod.name())
                 .logListener(new PackLogListener(LoggerFactory.getLogger(LOGGER.getName() + "/" + mod.id())))
                 .converters(pipelines)
-                .output(packPath)
+                .output(staged)
                 .vanillaPackPath(vanillaPath)
                 .vanillaPackVersion(SharedConstants.getCurrentVersion().id())
                 .textureSubdirectory(mod.namespace())
-                .packageHandler(new PackPackager());
+                .packageHandler(new PackPackager(entities, mod));
 
         converter.postProcessor((javaPack, bedrockPack) -> {
             for (PackModule<?> module : this.modules) {
@@ -196,8 +248,11 @@ public class PackManager {
         // Now export the pack
         try {
             converter.pack();
+            if (!Files.isRegularFile(staged)) return false;
+            Files.move(staged, packPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException ex) {
             LOGGER.error("Failed to export pack for mod {}", mod.id(), ex);
+            return false;
         }
 
         return Files.exists(packPath);

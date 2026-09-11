@@ -158,7 +158,8 @@ public class PackListener {
      * @param packPath The path to the pack.
      * @return {@code true} if the pack needs to be converted.
      */
-    private boolean checkNeedsConversion(ModInfo mod, Path packPath) {
+    boolean checkNeedsConversion(ModInfo mod, Path packPath) {
+        if (manager.entityPackNeedsPackaging(mod)) return true;
         // Read the uuid from the pack manifest
         String packUUID;
         try (
@@ -167,11 +168,11 @@ public class PackListener {
             InputStreamReader inputStreamReader = new InputStreamReader(inputStream)
         ) {
             packUUID = GSON.fromJson(inputStreamReader, Manifest.class).header().uuid();
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             return true;
         }
 
-        String modUUID = PackUtil.getModUUID(mod.roots()).toString();
+        String modUUID = manager.wantedPackUUID(mod).toString();
 
         return !modUUID.equals(packUUID);
     }

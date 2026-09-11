@@ -20,6 +20,31 @@ jobs:
         with:
           setup-java_java-version: 25
 
+      - name: Read converter revision
+        id: converter
+        run: echo "ref=$(cat gradle/pack-converter.ref)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: nguyenphuck2468-tech/PackConverter
+          ref: ${{ steps.converter.outputs.ref }}
+          path: .converter-build
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Build exact converter dependency
+        working-directory: .converter-build
+        run: ./gradlew publishToMavenLocal
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
       - name: Build Hydraulic
         run: ./gradlew build
 

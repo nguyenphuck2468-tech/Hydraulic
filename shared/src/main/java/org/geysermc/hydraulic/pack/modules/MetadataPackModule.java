@@ -29,9 +29,15 @@ import java.util.UUID;
 public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConverter<ModInfo, Manifest>, AssetCombiner<Manifest> {
     private static final Logger LOGGER = LogUtils.getLogger();
     private final ModInfo modInfo;
+    private final UUID packUUID;
 
     public MetadataPackModule(ModInfo modInfo) {
+        this(modInfo, PackUtil.getModUUID(modInfo.roots()));
+    }
+
+    public MetadataPackModule(ModInfo modInfo, UUID packUUID) {
         this.modInfo = modInfo;
+        this.packUUID = packUUID;
     }
 
     @Override
@@ -49,7 +55,7 @@ public class MetadataPackModule implements AssetExtractor<ModInfo>, AssetConvert
         Header header = manifest.header();
 
         // Generate the pack uuid from the mod file
-        String packUuid = PackUtil.getModUUID(mod.roots()).toString();
+        String packUuid = packUUID.toString();
         header.uuid(packUuid);
 
         // Generate module uuid based on type
